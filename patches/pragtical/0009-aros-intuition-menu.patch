@@ -1,0 +1,185 @@
+Title: 0009-aros-intuition-menu
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0008-lua54-language-test-env.patch
+Author: aros-pragtical project
+Date: 2026-11-15
+Upstream-Status: local-only
+Scope: AROS-only Intuition menu and event dispatch; renderer and command semantics unchanged
+
+Problem:
+  Pragtical renders its own menu but does not expose commands through the native Intuition menu.
+Solution:
+  Provide a native menu definition and forward its selections as SDL user events to core.on_event, which performs the same commands as the application menu.
+Validation:
+  x86_64 ABIv1 GCC 10.5 build; native File > New, Edit > Select All and Help > About passed on the 20261113 runtime.
+Removal:
+  Permanent AROS integration; remove only if equivalent native menu support is provided elsewhere.
+
+diff --git a/data/core/init.lua b/data/core/init.lua
+index 63a35437..c9ef916a 100644
+--- a/data/core/init.lua
++++ b/data/core/init.lua
+@@ -1674,6 +1674,11 @@ function core.on_event(type, ...)
+       core.active_file_dialogs[id] = nil
+       callback(status, result)
+     end
++  elseif type == "arosmenu" then
++    local command_name = ...
++    if _G.type(command_name) == "string" then
++      command.perform(command_name)
++    end
+   elseif type == "focuslost" then
+     core.root_view:on_focus_lost(...)
+   elseif type == "quit" then
+diff --git a/src/api/system.c b/src/api/system.c
+index 1781d5fb..a07a1168 100644
+--- a/src/api/system.c
++++ b/src/api/system.c
+@@ -15,6 +15,7 @@
+ #include "renderer/window.h"
+ #include "arena_allocator.h"
+ #include "custom_events.h"
++#include "aros_menu.h"
+ #include "../system_events.h"
+ #ifdef _WIN32
+   #include <direct.h>
+@@ -473,6 +474,13 @@ top:
+       }
+ 
+     default:
++#ifdef __AROS__
++      if (e.type == SDL_ArosMenuEventType && e.user.data1) {
++        lua_pushstring(L, "arosmenu");
++        lua_pushstring(L, (const char *) e.user.data1);
++        return 2;
++      }
++#endif
+       // Custom event types are higher than SDL_EVENT_USER
+       if (e.type >= SDL_EVENT_USER) {
+         CustomEventCallback cec = get_custom_event_callback_by_type(e.type);
+diff --git a/src/aros_menu.c b/src/aros_menu.c
+new file mode 100644
+index 00000000..a2e33e16
+--- /dev/null
++++ b/src/aros_menu.c
+@@ -0,0 +1,59 @@
++#ifdef __AROS__
++
++#include "aros_menu.h"
++#include <SDL3/SDL.h>
++
++uint32_t SDL_ArosMenuEventType = 0;
++
++static struct NewMenu pragtical_menu[] = {
++  { NM_TITLE, (const UBYTE *) "File", NULL, 0, 0, NULL },
++  { NM_ITEM, (const UBYTE *) "New", (const UBYTE *) "N", 0, 0, (APTR) "core:new-doc" },
++  { NM_ITEM, (const UBYTE *) "Open File...", (const UBYTE *) "O", 0, 0, (APTR) "core:open-file" },
++  { NM_ITEM, (const UBYTE *) "Save", (const UBYTE *) "S", 0, 0, (APTR) "doc:save" },
++  { NM_ITEM, (const UBYTE *) "Save As...", 0, 0, 0, (APTR) "doc:save-as" },
++  { NM_ITEM, (const UBYTE *) "Close", (const UBYTE *) "W", 0, 0, (APTR) "root:close" },
++  { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
++  { NM_ITEM, (const UBYTE *) "Quit", (const UBYTE *) "Q", 0, 0, (APTR) "core:quit" },
++
++  { NM_TITLE, (const UBYTE *) "Edit", NULL, 0, 0, NULL },
++  { NM_ITEM, (const UBYTE *) "Undo", (const UBYTE *) "Z", 0, 0, (APTR) "doc:undo" },
++  { NM_ITEM, (const UBYTE *) "Redo", (const UBYTE *) "Y", 0, 0, (APTR) "doc:redo" },
++  { NM_ITEM, NM_BARLABEL, NULL, 0, 0, NULL },
++  { NM_ITEM, (const UBYTE *) "Cut", (const UBYTE *) "X", 0, 0, (APTR) "doc:cut" },
++  { NM_ITEM, (const UBYTE *) "Copy", (const UBYTE *) "C", 0, 0, (APTR) "doc:copy" },
++  { NM_ITEM, (const UBYTE *) "Paste", (const UBYTE *) "V", 0, 0, (APTR) "doc:paste" },
++  { NM_ITEM, (const UBYTE *) "Select All", (const UBYTE *) "A", 0, 0, (APTR) "doc:select-all" },
++  { NM_ITEM, (const UBYTE *) "Delete", 0, 0, 0, (APTR) "doc:delete" },
++
++  { NM_TITLE, (const UBYTE *) "Search", NULL, 0, 0, NULL },
++  { NM_ITEM, (const UBYTE *) "Find...", (const UBYTE *) "F", 0, 0, (APTR) "find-replace:find" },
++  { NM_ITEM, (const UBYTE *) "Replace...", (const UBYTE *) "R", 0, 0, (APTR) "find-replace:replace" },
++  { NM_ITEM, (const UBYTE *) "Find File...", (const UBYTE *) "P", 0, 0, (APTR) "core:find-file" },
++  { NM_ITEM, (const UBYTE *) "Go to Line...", (const UBYTE *) "G", 0, 0, (APTR) "doc:go-to-line" },
++
++  { NM_TITLE, (const UBYTE *) "View", NULL, 0, 0, NULL },
++  { NM_ITEM, (const UBYTE *) "Previous Tab", 0, 0, 0, (APTR) "root:switch-to-previous-tab" },
++  { NM_ITEM, (const UBYTE *) "Next Tab", 0, 0, 0, (APTR) "root:switch-to-next-tab" },
++  { NM_ITEM, (const UBYTE *) "Fullscreen", 0, 0, 0, (APTR) "core:toggle-fullscreen" },
++  { NM_ITEM, (const UBYTE *) "Menu Bar", 0, 0, 0, (APTR) "menu-bar:toggle" },
++
++  { NM_TITLE, (const UBYTE *) "Tools", NULL, 0, 0, NULL },
++  { NM_ITEM, (const UBYTE *) "Command Palette...", (const UBYTE *) "B", 0, 0, (APTR) "core:find-command" },
++  { NM_ITEM, (const UBYTE *) "Settings...", 0, 0, 0, (APTR) "ui:settings" },
++
++  { NM_TITLE, (const UBYTE *) "Help", NULL, 0, 0, NULL },
++  { NM_ITEM, (const UBYTE *) "Documentation", 0, 0, 0, (APTR) "core:view-documentation-help" },
++  { NM_ITEM, (const UBYTE *) "About", 0, 0, 0, (APTR) "core:view-about" },
++  { NM_ITEM, (const UBYTE *) "Website", 0, 0, 0, (APTR) "core:view-website" },
++
++  { NM_END, NULL, NULL, 0, 0, NULL }
++};
++
++struct NewMenu *SDL_ArosMenu = pragtical_menu;
++
++bool init_aros_menu(void) {
++  SDL_ArosMenuEventType = SDL_RegisterEvents(1);
++  return SDL_ArosMenuEventType != 0;
++}
++
++#endif
+diff --git a/src/aros_menu.h b/src/aros_menu.h
+new file mode 100644
+index 00000000..f12e5537
+--- /dev/null
++++ b/src/aros_menu.h
+@@ -0,0 +1,16 @@
++#ifndef AROS_MENU_H
++#define AROS_MENU_H
++
++#ifdef __AROS__
++
++#include <stdbool.h>
++#include <stdint.h>
++#include <libraries/gadtools.h>
++
++extern uint32_t SDL_ArosMenuEventType;
++extern struct NewMenu *SDL_ArosMenu;
++
++bool init_aros_menu(void);
++
++#endif
++#endif
+diff --git a/src/main.c b/src/main.c
+index 405f6ff4..dff13090 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -9,6 +9,7 @@
+ #include "system_events.h"
+ #include "renderer/renderer.h"
+ #include "custom_events.h"
++#include "aros_menu.h"
+ 
+ #ifdef __AROS__
+ /* Workbench default stack is far too small for SDL3 + Lua + FreeType. */
+@@ -362,6 +363,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
+     fprintf(stderr, "Error initializing custom events: %s\n", SDL_GetError());
+     return SDL_APP_FAILURE;
+   }
++#ifdef __AROS__
++  if (!init_aros_menu())
++    return SDL_APP_FAILURE;
++#endif
+ 
+   AppState *app = SDL_calloc(1, sizeof(AppState));
+   if (!app) {
+diff --git a/src/meson.build b/src/meson.build
+index c54a6ecb..96fb367d 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -34,6 +34,10 @@ pragtical_sources = [
+     'main.c',
+ ]
+ 
++if host_machine.system() == 'aros'
++    pragtical_sources += 'aros_menu.c'
++endif
++
+ if lua_jit_found
+     pragtical_sources += 'ffiexports.c'
+     if host_machine.system() != 'windows' and host_machine.system() != 'darwin'

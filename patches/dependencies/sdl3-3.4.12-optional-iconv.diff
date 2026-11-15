@@ -1,0 +1,34 @@
+--- a/include/build_config/SDL_build_config_aros.h
++++ b/include/build_config/SDL_build_config_aros.h
+@@ -54,7 +54,9 @@
+ 
+ /* Useful headers */
+ #define HAVE_ALLOCA_H 1
++#ifndef SDL_AROS_NO_ICONV
+ #define HAVE_ICONV_H 1
++#endif
+ #define HAVE_INTTYPES_H 1
+ #define HAVE_LIMITS_H 1
+ #define HAVE_MALLOC_H 1
+@@ -192,8 +194,10 @@
+ /* #undef HAVE_SYSCTLBYNAME */
+ /* #undef HAVE_CLOCK_GETTIME */
+ /* #undef HAVE_GETPAGESIZE */
++#ifndef SDL_AROS_NO_ICONV
+ #define HAVE_ICONV 1
+ #define SDL_USE_LIBICONV 1
++#endif
+ /* #undef HAVE_PTHREAD_SETNAME_NP */
+ /* #undef HAVE_PTHREAD_SET_NAME_NP */
+ /* #undef HAVE_SEM_TIMEDWAIT */
+--- a/src/stdlib/SDL_iconv.c
++++ b/src/stdlib/SDL_iconv.c
+@@ -20,6 +20,8 @@
+ */
+ #include "SDL_internal.h"
+ 
++#include <stddef.h> // ptrdiff_t, when no iconv.h brings it in
++
+ // This file contains portable iconv functions for SDL
+ 
+ #if defined(HAVE_ICONV) && defined(HAVE_ICONV_H)

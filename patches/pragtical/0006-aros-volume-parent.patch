@@ -1,0 +1,34 @@
+Title: 0006-aros-volume-parent
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0005-aros-save-as-volume-root.patch
+Author: aros-pragtical project
+Date: 2026-11-01
+Upstream-Status: submitted
+Upstream-Link: https://github.com/pragtical/pragtical/pull/670
+Scope: common.dirname AROS volume roots; initial project selection and reopen.
+
+Problem:
+  Opening a file directly on an AROS volume passes nil as its project directory because common.dirname only recognizes slash separators.
+Solution:
+  Recognize a volume-colon root as the parent directory on AROS, without changing Windows or Unix path behavior.
+Validation:
+  The Pragtical 3.14.0 x86_64 ABIv1 build compiled and linked, and the focused dirname regression passed seven cases. Nested and volume-root command-line reopen checks passed with the expected document contents on 2026-11-15.
+Removal:
+  Remove when the pinned upstream contains the merged equivalent and the focused regression plus both x86_64 runtime checks pass.
+
+diff --git a/data/core/common.lua b/data/core/common.lua
+index 07ce9cca..337727ec 100644
+--- a/data/core/common.lua
++++ b/data/core/common.lua
+@@ -652,6 +652,10 @@ end
+ ---@return string|nil
+ function common.dirname(path)
+   local dirname = path:match("(.+)["..PATHSEP.."][^"..PATHSEP.."]+$")
++  if not dirname and PLATFORM == "AROS" then
++    -- The volume separator is the parent of a file at an AROS volume root.
++    return path:match("^([^:]+:)")
++  end
+   if not dirname and PLATFORM ~= "Windows" and path:sub(1, 1) == PATHSEP then
+     return PATHSEP
+   end

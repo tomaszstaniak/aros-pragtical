@@ -1,0 +1,65 @@
+# SDL3 3.4.12 AROS: allow an application to supply an Intuition menu.
+#
+# SDL_ArosMenu replaces the stock menu when non-NULL. If the application also
+# registers SDL_ArosMenuEventType, selecting one of its own menu items emits an
+# SDL user event whose data1 is the item's GTMENUITEM_USERDATA pointer. Weak
+# defaults preserve the stock menu and do not require every SDL application to
+# provide these symbols. Stock menu handling is unchanged.
+#
+# Validation: Pragtical 3.14.0 x86_64 ABIv1 build; Intuition File > New,
+# Edit > Select All, Help > About and File > Quit passed on nightly 20261113.
+#
+--- a/src/video/aros/SDL_arosevents.c
++++ b/src/video/aros/SDL_arosevents.c
+@@ -44,6 +44,11 @@
+ #include <workbench/startup.h>
+ 
+ #include <libraries/gadtools.h>
++
++/* Applications may replace the stock menu and receive their own menu IDs as
++ * SDL user events. Weak defaults keep other SDL applications unchanged. */
++struct NewMenu *SDL_ArosMenu __attribute__((weak)) = NULL;
++Uint32 SDL_ArosMenuEventType __attribute__((weak)) = 0;
+ 
+ #if !defined(SDL3_AROS_STATIC)
+ #include <hidd/hidd.h>
+@@ -622,8 +627,18 @@
+                     break;
+                 case MID_ABOUTSYS:
+                     AROS_AboutSystem(data->win);
+-                default:
+-                    break;
++                    break;
++                default: {
++                    if (SDL_ArosMenuEventType) {
++                        SDL_Event event;
++                        SDL_zero(event);
++                        event.user.type = SDL_ArosMenuEventType;
++                        event.user.windowID = SDL_GetWindowID(data->window);
++                        event.user.data1 = GTMENUITEM_USERDATA(item);
++                        SDL_PushEvent(&event);
++                    }
++                    break;
++                }
+                 }
+             }
+         }
+--- a/src/video/aros/SDL_aroswindow.c
++++ b/src/video/aros/SDL_aroswindow.c
+@@ -55,6 +55,7 @@
+ extern struct Library *DOSBase;
+ extern struct Library *WorkbenchBase;
+ extern struct Library *GfxBase;
++extern struct NewMenu *SDL_ArosMenu;
+ 
+ struct NewMenu SDL_NewMenu[] =
+ {
+@@ -520,7 +521,7 @@
+             if (!fullscreen) {
+                 data->menuvisualinfo = GetVisualInfoA(vd->WScreen, NULL);
+                 if (data->menuvisualinfo) {
+-                    data->menu = CreateMenusA(SDL_NewMenu, NULL);
++                    data->menu = CreateMenusA(SDL_ArosMenu ? SDL_ArosMenu : SDL_NewMenu, NULL);
+                     if (data->menu) {
+                         if (!LayoutMenusA(data->menu, data->menuvisualinfo, NULL)) {
+                             ClearMenuStrip(data->win);

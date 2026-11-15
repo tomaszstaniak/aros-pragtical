@@ -1,0 +1,127 @@
+Title: 0003-aros-absolute-paths
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0002-aros-stack-exepath-realpath.patch
+Author: aros-pragtical project
+Date: 2026-09-20
+Upstream-Status: candidate
+Scope: AROS system.absolute_path, system.chdir, and common.is_absolute_path.
+
+Problem:
+  posixc realpath('.') returns NULL on a volume:path cwd, so core.set_project never ran and load_plugins indexed a nil root_project. Unix is_absolute_path also treated Qemu Vvfat:Pragtical as relative.
+Solution:
+  Resolve '.' via SDL_GetCurrentDirectory, keep volume:path as already-absolute, join relative names onto that cwd; treat a colon before any slash as an AROS absolute path; strip a non-root trailing slash before chdir.
+Validation:
+  The Pragtical 3.14.0 x86_64 ABIv1 build compiled and linked, all 15 focused Lua cases passed, and runtime checks covered nested and volume-root opening, saving and command-line reopening on 2026-11-15.
+Removal:
+  Remove only when the pinned upstream contains equivalent AROS path handling and both x86_64 targets pass their regressions.
+
+diff --git a/data/core/common.lua b/data/core/common.lua
+index 5c6edd0f..555aef70 100644
+--- a/data/core/common.lua
++++ b/data/core/common.lua
+@@ -784,6 +784,12 @@ end
+ ---@param path string
+ ---@return boolean
+ function common.is_absolute_path(path)
++  if PLATFORM == "AROS" then
++    -- Volume:path is absolute; a colon after a slash is a name, not a device.
++    local colon = path:find(":", 1, true)
++    local slash = path:find("/", 1, true)
++    return colon ~= nil and (slash == nil or colon < slash)
++  end
+   return path:sub(1, 1) == PATHSEP or path:match("^(%a):\\")
+ end
+ 
+diff --git a/src/api/system.c b/src/api/system.c
+index f9a71789..1781d5fb 100644
+--- a/src/api/system.c
++++ b/src/api/system.c
+@@ -32,6 +32,15 @@
+ #ifdef __linux__
+   #include <sys/vfs.h>
+ #endif
++#ifdef __AROS__
++/* posixc hides realpath unless _POSIX_C_SOURCE >= 200112L; gnu11 does
++ * not set that, and the 64-bit implicit-int return would truncate. */
++#include <limits.h>
++#ifndef PATH_MAX
++#define PATH_MAX 1024
++#endif
++char *realpath(const char *, char *);
++#endif
+ #endif
+ 
+ #define dialogfinished_event_name "dialogfinished"
+@@ -747,6 +756,16 @@ static int f_chdir(lua_State *L) {
+   if (wpath == NULL) { return luaL_error(L, UTFCONV_ERROR_INVALID_CONVERSION ); }
+   int err = _wchdir(wpath);
+   SDL_free(wpath);
++#elif defined(__AROS__)
++  /* posixc chdir rejects a trailing slash that is not a volume root. */
++  char tmp[PATH_MAX];
++  size_t n = strlen(path);
++  if (n >= sizeof tmp)
++    return luaL_error(L, "chdir() failed: path too long");
++  memcpy(tmp, path, n + 1);
++  if (n > 1 && tmp[n - 1] == '/' && tmp[n - 2] != ':')
++    tmp[n - 1] = '\0';
++  int err = chdir(tmp);
+ #else
+   int err = chdir(path);
+ #endif
+@@ -791,16 +810,6 @@ static int f_list_dir(lua_State *L) {
+   #define realpath(x, y) _wfullpath(y, x, MAX_PATH)
+ #endif
+ 
+-#ifdef __AROS__
+-/* posixc hides realpath unless _POSIX_C_SOURCE >= 200112L; gnu11 does
+- * not set that, and the 64-bit implicit-int return would truncate. */
+-#include <limits.h>
+-#ifndef PATH_MAX
+-#define PATH_MAX 1024
+-#endif
+-char *realpath(const char *, char *);
+-#endif
+-
+ static int f_absolute_path(lua_State *L) {
+   const char *path = luaL_checkstring(L, 1);
+ #ifdef _WIN32
+@@ -819,10 +828,33 @@ static int f_absolute_path(lua_State *L) {
+   return 1;
+ #elif defined(__AROS__)
+   char resolved[PATH_MAX];
+-  if (!realpath(path, resolved))
+-    return 0;
+-  lua_pushstring(L, resolved);
+-  return 1;
++  if (path[0] && realpath(path, resolved)) {
++    lua_pushstring(L, resolved);
++    return 1;
++  }
++  /* posixc realpath does not understand volume:path, including "." as
++   * the current AmigaDOS directory. */
++  if (path[0] == '\0' || strcmp(path, ".") == 0 || strcmp(path, "./") == 0) {
++    char *cwd = SDL_GetCurrentDirectory();
++    if (!cwd)
++      return 0;
++    lua_pushstring(L, cwd);
++    SDL_free(cwd);
++    return 1;
++  }
++  if (strchr(path, ':')) {
++    lua_pushstring(L, path);
++    return 1;
++  }
++  {
++    char *cwd = SDL_GetCurrentDirectory();
++    if (!cwd)
++      return 0;
++    SDL_snprintf(resolved, sizeof resolved, "%s%s", cwd, path);
++    lua_pushstring(L, resolved);
++    SDL_free(cwd);
++    return 1;
++  }
+ #else
+   char *res = realpath(path, NULL);
+   if (!res) { return 0; }

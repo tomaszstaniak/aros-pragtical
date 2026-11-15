@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "component": "pragtical",
+  "base_revision": "5c05f09e081833b581fb5ecd10e64963dec87f03",
+  "patches": [
+    "0005-aros-save-as-volume-root.patch",
+    "0006-aros-volume-parent.patch",
+    "0007-file-argument-project-directory.patch"
+  ],
+  "upstream_checked": "14db2438df44c9e46e253b22170357a55854fbf6",
+  "checked_date": "2026-11-15",
+  "next_review": "2026-11-22",
+  "upstream_status": "submitted",
+  "upstream_url": "https://github.com/pragtical/pragtical/pull/670",
+  "validation": {
+    "patch_series_reproduction": true,
+    "portable_regression_cases": 15,
+    "current_upstream_regression_cases": 15,
+    "v11_runtime": "Pragtical 3.8.3 historical PASS: new/save/overwrite and cold reboot command-line reopen of SYS: file",
+    "v1_runtime": "Pragtical 3.8.3 historical PASS: v1-1 September23 baseline, exec51.9; CLI root open/new/Save As/save/overwrite/quit/explicit-path reopen; collected exact bytes.",
+    "port_3_14_0_v1_build": "PASS: compile and link on 2026-11-15, GCC 10.5, x86_64 ABIv1",
+    "port_3_14_0_runtime": "PASS on v1-1 nightly 20261113: editor start, editing, Save As, overwrite, nested and volume-root command-line reopen, exact collected bytes",
+    "port_3_14_0_shared_memory": "6/6 upstream tests passed",
+    "port_3_14_0_tokenizer": "43/43 tests passed; language fixtures 2/2 with 126 samples",
+    "port_3_14_0_native_menu": "Intuition File > New, Edit > Select All, Help > About and File > Quit passed",
+    "port_3_14_0_package": "Local ZIP passed host integrity and AROS extraction, document open/edit/save/reopen, launcher and native Quit checks",
+    "port_3_14_0_renderer": "surface passed; SDL default renderer software; SDL_GPU_SUPPORTED=0; Pragtical sdlrenderer unqualified; OpenGL probe made guest unresponsive",
+    "port_3_14_0_cleanup": "Some editor exits report unfreed signals; process cleanup is not fully qualified"
+  },
+  "next_action": "Monitor PR670; remove local patches when pin incorporates the merged equivalent.",
+  "upstream_commit": "ea0f43e8538c9b36ec5d13c17d72d74af0d792c3"
+}

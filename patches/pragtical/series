@@ -1,0 +1,11 @@
+0001-aros-shmem-and-process-stubs.patch
+0002-aros-stack-exepath-realpath.patch
+0003-aros-absolute-paths.patch
+0004-aros-home-global.patch
+0005-aros-save-as-volume-root.patch
+0006-aros-volume-parent.patch
+0007-file-argument-project-directory.patch
+0008-lua54-language-test-env.patch
+0009-aros-intuition-menu.patch
+0010-tokenizer-resume-zero-state.patch
+0011-aros-directory-notification.patch

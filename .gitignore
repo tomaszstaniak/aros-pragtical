@@ -1,0 +1,23 @@
+# Generated dependencies and build outputs.
+/build/
+/dist/
+/target/
+/node_modules/
+/deps/
+
+# Local copies in the optional upstream-patches workflow.
+/upstream/
+/work/
+
+# Mutable local state; ignored does not mean disposable.
+/var/
+/local.json
+/local.env
+/.env
+/.env.local
+/.venv/
+
+# Host metadata.
+.DS_Store
+Thumbs.db
+__pycache__/

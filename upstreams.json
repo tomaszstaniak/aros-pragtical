@@ -1,0 +1,8 @@
+{
+  "repositories": {
+    "pragtical": {
+      "url": "https://github.com/pragtical/pragtical.git",
+      "commit": "5c05f09e081833b581fb5ecd10e64963dec87f03"
+    }
+  }
+}

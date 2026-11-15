@@ -1,0 +1,369 @@
+Title: 0011-aros-directory-notification
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0010-tokenizer-resume-zero-state.patch
+Author: aros-pragtical project
+Date: 2026-11-15
+Upstream-Status: candidate
+Scope: AROS only: new src/api/dirmonitor/aros.c, backend registration in dirmonitor.c/dirmonitor.h, Meson option choice and source selection. No change for other systems.
+
+Problem:
+  On AROS the editor used the dummy directory monitor, so every watched directory and open file was checked by comparing modification times and changes made outside the editor showed up late or not at all.
+Solution:
+  Add an 'aros' directory monitor backend on dos.library StartNotify/EndNotify. One NotifyRequest per watched path posts to a polled message port; all dos.library calls stay on the main thread. Only the RAM disk and SFS are used, because FAT accepts a directory request but does not report changes to entries inside it; other file systems keep the modification-time fallback.
+Validation:
+  2026-11-15, built for x86_64 ABIv1, x86_64 ABIv11 and Raspberry Pi. On mainline nightly 20261113 and AROS One 1.3 an event log showed notifications for create, modify and delete in a RAM disk and an SFS directory and for a modified file; a FAT directory is refused and falls back. Project tree updates, the reload prompt and quit with active watches passed on all three targets.
+Removal:
+  Permanent. The RAM/SFS restriction can go when FAT reports changes inside a watched directory.
+
+diff --git a/meson_options.txt b/meson_options.txt
+index 8c083ed9..a2e0988b 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -3,7 +3,7 @@ option('source-only', type : 'boolean', value : false, description: 'Configure s
+ option('portable', type : 'boolean', value : false, description: 'Portable install')
+ option('renderer', type : 'boolean', value : false, description: 'Use SDL renderer')
+ option('renderer_backend', type : 'combo', value : 'surface', choices : ['surface', 'sdlrenderer', 'sdlgpu'], description: 'Renderer backend to use')
+-option('dirmonitor_backends', type : 'array', value : [], choices : ['inotify', 'fsevents', 'kqueue', 'inodewatcher', 'win32', 'dummy'], description: 'define what dirmonitor backend to use')
++option('dirmonitor_backends', type : 'array', value : [], choices : ['inotify', 'fsevents', 'kqueue', 'inodewatcher', 'win32', 'aros', 'dummy'], description: 'define what dirmonitor backend to use')
+ option('arch_tuple', type : 'string', value : '', description: 'Specify a custom architecture tuple')
+ option('use_system_lua', type : 'boolean', value : false, description: 'Prefer System Lua over the meson wrap')
+ option('extra_colors', type : 'boolean', value : true, description: 'Include additional colors')
+diff --git a/src/api/dirmonitor.c b/src/api/dirmonitor.c
+index 858c942b..cde46408 100644
+--- a/src/api/dirmonitor.c
++++ b/src/api/dirmonitor.c
+@@ -35,6 +35,9 @@ static struct dirmonitor_backend* const backends[] = {
+ #ifdef DIRMONITOR_WIN32
+   &dirmonitor_win32,
+ #endif
++#ifdef DIRMONITOR_AROS
++  &dirmonitor_aros,
++#endif
+ #ifdef DIRMONITOR_DUMMY
+   &dirmonitor_dummy,
+ #endif
+diff --git a/src/api/dirmonitor/aros.c b/src/api/dirmonitor/aros.c
+new file mode 100644
+index 00000000..0ac78657
+--- /dev/null
++++ b/src/api/dirmonitor/aros.c
+@@ -0,0 +1,281 @@
++/*
++ * Directory monitor for AROS, built on dos.library file notification.
++ *
++ * Every watched path gets its own NotifyRequest that sends messages to one
++ * port. All dos.library calls are made by the main thread (init, add, remove,
++ * deinit). The monitor thread only takes messages off the port, so it never
++ * needs to be a DOS process. The port ignores message arrival (PA_IGNORE) and
++ * is polled, which keeps the main task's signals untouched and lets deinit
++ * finish without having to wake a waiting thread.
++ *
++ * Only file systems known to report changes inside a watched directory are
++ * used: the RAM disk and SFS. FAT accepts a request for a directory but stays
++ * silent when files in it are created, renamed or deleted (measured on the
++ * x86_64 nightly of 2026-11-13), so a request there would hide every change.
++ * For any other file system add returns -1 and the caller falls back to
++ * comparing modification times.
++ */
++#include <SDL3/SDL.h>
++
++#include <string.h>
++
++#include <exec/types.h>
++#include <exec/lists.h>
++#include <exec/memory.h>
++#include <exec/ports.h>
++#include <exec/semaphores.h>
++#include <dos/dos.h>
++#include <dos/dosextens.h>
++#include <dos/notify.h>
++#include <proto/exec.h>
++#include <proto/dos.h>
++
++#include "dirmonitor.h"
++
++#define POLL_INTERVAL_MS 100
++
++struct aros_watch {
++  struct NotifyRequest request;
++  int changed;
++  char name[1];
++};
++
++struct dirmonitor_internal {
++  struct SignalSemaphore lock;
++  struct MsgPort* port;
++  struct aros_watch** watches;
++  int capacity;
++  int closed;
++};
++
++
++/* Takes every queued notification off the port and marks its watch. Call with
++ * the lock held. Messages are replied at once: the file system owns them. */
++static void drain_port(struct dirmonitor_internal* monitor) {
++  struct Message* message;
++
++  while ((message = GetMsg(monitor->port)) != NULL) {
++    struct NotifyMessage* notify = (struct NotifyMessage*) message;
++
++    if (notify->nm_Class == NOTIFY_CLASS && notify->nm_NReq) {
++      int id = (int) notify->nm_NReq->nr_UserData;
++
++      if (id >= 0 && id < monitor->capacity && monitor->watches[id]
++          && &monitor->watches[id]->request == notify->nm_NReq)
++        monitor->watches[id]->changed = 1;
++    }
++    ReplyMsg(message);
++  }
++}
++
++
++/* True when the path lives on a file system whose notifications cover the
++ * entries of a watched directory. */
++static int notifies_directory_changes(const char* path) {
++  struct DevProc* target;
++  struct DevProc* ram;
++  struct InfoData info __attribute__((aligned(8)));
++  BPTR lock;
++  int result = 0;
++
++  target = GetDeviceProc((STRPTR) path, NULL);
++  if (!target)
++    return 0;
++  ram = GetDeviceProc((STRPTR) "RAM:", NULL);
++  if (ram) {
++    result = ram->dvp_Port != NULL && ram->dvp_Port == target->dvp_Port;
++    FreeDeviceProc(ram);
++  }
++  FreeDeviceProc(target);
++  if (result)
++    return 1;
++
++  lock = Lock((STRPTR) path, SHARED_LOCK);
++  if (!lock)
++    return 0;
++  memset(&info, 0, sizeof(info));
++  if (Info(lock, &info))
++    result = (info.id_DiskType & 0xFFFFFF00UL) == AROS_MAKE_ID('S', 'F', 'S', 0);
++  UnLock(lock);
++  return result;
++}
++
++
++static struct dirmonitor_internal* init_dirmonitor(void) {
++  struct dirmonitor_internal* monitor = SDL_calloc(1, sizeof(struct dirmonitor_internal));
++
++  if (!monitor)
++    return NULL;
++  InitSemaphore(&monitor->lock);
++  monitor->port = CreateMsgPort();
++  if (monitor->port)
++    monitor->port->mp_Flags = PA_IGNORE;
++  return monitor;
++}
++
++
++static void deinit_dirmonitor(struct dirmonitor_internal* monitor) {
++  int id;
++
++  if (!monitor)
++    return;
++  ObtainSemaphore(&monitor->lock);
++  monitor->closed = 1;
++  if (monitor->port) {
++    for (id = 0; id < monitor->capacity; id++)
++      if (monitor->watches[id])
++        EndNotify(&monitor->watches[id]->request);
++    drain_port(monitor);
++    for (id = 0; id < monitor->capacity; id++)
++      if (monitor->watches[id])
++        FreeVec(monitor->watches[id]);
++    /* The signal bit belongs to the task that created the port; restore the
++     * flag so that DeleteMsgPort releases it. */
++    monitor->port->mp_Flags = PA_SIGNAL;
++    DeleteMsgPort(monitor->port);
++    monitor->port = NULL;
++  }
++  SDL_free(monitor->watches);
++  monitor->watches = NULL;
++  monitor->capacity = 0;
++  ReleaseSemaphore(&monitor->lock);
++}
++
++
++static int get_changes_dirmonitor(struct dirmonitor_internal* monitor, char* buffer, int buffer_size) {
++  int* ids = (int*) buffer;
++  int limit = buffer_size / (int) sizeof(int);
++  int count = 0;
++  int id;
++
++  if (!monitor)
++    return -1;
++  ObtainSemaphore(&monitor->lock);
++  if (monitor->closed || !monitor->port) {
++    ReleaseSemaphore(&monitor->lock);
++    return -1;
++  }
++  drain_port(monitor);
++  for (id = 0; id < monitor->capacity && count < limit; id++) {
++    if (monitor->watches[id] && monitor->watches[id]->changed) {
++      monitor->watches[id]->changed = 0;
++      ids[count++] = id;
++    }
++  }
++  ReleaseSemaphore(&monitor->lock);
++
++  if (count == 0) {
++    SDL_Delay(POLL_INTERVAL_MS);
++    return 0;
++  }
++  return count * (int) sizeof(int);
++}
++
++
++static int translate_changes_dirmonitor(struct dirmonitor_internal* monitor, char* buffer, int buffer_size, int (*change_callback)(int, const char*, void*), void* data) {
++  int* ids = (int*) buffer;
++  int count = buffer_size / (int) sizeof(int);
++  int i;
++
++  for (i = 0; i < count; i++)
++    change_callback(ids[i], NULL, data);
++  return 0;
++}
++
++
++static int add_dirmonitor(struct dirmonitor_internal* monitor, const char* path) {
++  struct aros_watch* watch;
++  size_t length;
++  int id;
++
++  if (!monitor || !path || !*path)
++    return -1;
++
++  length = strlen(path);
++  /* "Work:src/" names the same directory as "Work:src". */
++  while (length > 1 && path[length - 1] == '/' && path[length - 2] != ':' && path[length - 2] != '/')
++    length--;
++
++  watch = AllocVec(sizeof(struct aros_watch) + length, MEMF_PUBLIC | MEMF_CLEAR);
++  if (!watch)
++    return -1;
++  memcpy(watch->name, path, length);
++  watch->name[length] = '\0';
++  if (!notifies_directory_changes(watch->name)) {
++    FreeVec(watch);
++    return -1;
++  }
++
++  ObtainSemaphore(&monitor->lock);
++  if (monitor->closed || !monitor->port) {
++    ReleaseSemaphore(&monitor->lock);
++    FreeVec(watch);
++    return -1;
++  }
++
++  for (id = 0; id < monitor->capacity; id++)
++    if (!monitor->watches[id])
++      break;
++  if (id == monitor->capacity) {
++    int capacity = monitor->capacity ? monitor->capacity * 2 : 32;
++    struct aros_watch** watches = SDL_realloc(monitor->watches, capacity * sizeof(*watches));
++
++    if (!watches) {
++      ReleaseSemaphore(&monitor->lock);
++      FreeVec(watch);
++      return -1;
++    }
++    memset(watches + monitor->capacity, 0, (capacity - monitor->capacity) * sizeof(*watches));
++    monitor->watches = watches;
++    monitor->capacity = capacity;
++  }
++
++  watch->request.nr_Name = (STRPTR) watch->name;
++  watch->request.nr_UserData = (IPTR) id;
++  watch->request.nr_Flags = NRF_SEND_MESSAGE;
++  watch->request.nr_stuff.nr_Msg.nr_Port = monitor->port;
++
++  /* The slot is filled before the request is posted, so a notification that
++   * arrives at once is matched to this watch. */
++  monitor->watches[id] = watch;
++  if (!StartNotify(&watch->request)) {
++    monitor->watches[id] = NULL;
++    ReleaseSemaphore(&monitor->lock);
++    FreeVec(watch);
++    return -1;
++  }
++  ReleaseSemaphore(&monitor->lock);
++  return id;
++}
++
++
++static void remove_dirmonitor(struct dirmonitor_internal* monitor, int id) {
++  struct aros_watch* watch;
++
++  if (!monitor || id < 0)
++    return;
++  ObtainSemaphore(&monitor->lock);
++  if (!monitor->closed && monitor->port && id < monitor->capacity && monitor->watches[id]) {
++    watch = monitor->watches[id];
++    EndNotify(&watch->request);
++    /* Messages posted before EndNotify still point at this request. */
++    drain_port(monitor);
++    monitor->watches[id] = NULL;
++    FreeVec(watch);
++  }
++  ReleaseSemaphore(&monitor->lock);
++}
++
++
++static int get_mode_dirmonitor(void) { return 2; }
++
++struct dirmonitor_backend dirmonitor_aros = {
++  .name = "aros",
++  .init = init_dirmonitor,
++  .deinit = deinit_dirmonitor,
++  .get_changes = get_changes_dirmonitor,
++  .translate_changes = translate_changes_dirmonitor,
++  .add = add_dirmonitor,
++  .remove = remove_dirmonitor,
++  .get_mode = get_mode_dirmonitor,
++};
+diff --git a/src/api/dirmonitor/dirmonitor.h b/src/api/dirmonitor/dirmonitor.h
+index 46913483..ce6f3e1b 100644
+--- a/src/api/dirmonitor/dirmonitor.h
++++ b/src/api/dirmonitor/dirmonitor.h
+@@ -12,6 +12,7 @@ struct dirmonitor_backend {
+   int (*get_mode)();
+ };
+ 
++extern struct dirmonitor_backend dirmonitor_aros;
+ extern struct dirmonitor_backend dirmonitor_dummy;
+ extern struct dirmonitor_backend dirmonitor_fsevents;
+ extern struct dirmonitor_backend dirmonitor_inodewatcher;
+diff --git a/src/meson.build b/src/meson.build
+index 96fb367d..d04083ef 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -96,6 +96,10 @@ if dirmonitor_backends.length() == 0
+         dirmonitor_backends += 'win32'
+     endif
+ 
++    if host_machine.system() == 'aros'
++        dirmonitor_backends += 'aros'
++    endif
++
+     dirmonitor_backends += 'dummy'
+ endif
+ 
+@@ -120,6 +124,9 @@ foreach backend : dirmonitor_backends
+     elif backend == 'win32'
+         pragtical_sources += 'api' / 'dirmonitor' / 'win32.c'
+         pragtical_cargs += '-DDIRMONITOR_WIN32'
++    elif backend == 'aros'
++        pragtical_sources += 'api' / 'dirmonitor' / 'aros.c'
++        pragtical_cargs += '-DDIRMONITOR_AROS'
+     elif backend == 'dummy'
+         pragtical_sources += 'api' / 'dirmonitor' / 'dummy.c'
+         pragtical_cargs += '-DDIRMONITOR_DUMMY'

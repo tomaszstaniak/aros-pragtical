@@ -1,0 +1,42 @@
+# SDL3 3.4.12 AROS: allow framebuffer creation while a window is hidden.
+#
+# Pragtical 3.14 creates its window with SDL_WINDOW_HIDDEN and asks for the
+# surface before the first present. AROS_CreateWindowFramebuffer rejected that
+# state because no Intuition window exists yet. Allocate the existing memfb
+# fallback instead; AROS_UpdateWindowFramebuffer uses it after the window is
+# shown, and the normal bitmap path still handles later visible-window calls.
+#
+# Validation: Pragtical 3.14.0 x86_64 ABIv1 surface startup, document
+# open/edit/save/reopen and all 6 shared-memory tests passed on nightly 20261113.
+#
+--- a/src/video/aros/SDL_arosframebuffer.c
++++ b/src/video/aros/SDL_arosframebuffer.c
+@@ -77,16 +77,23 @@
+         data->memfb = NULL;
+     }
+ 
+-	if (!data->win) {
+-		D(bug("[SDL3:arosfb] %s: ERROR: no window ptr\n", __func__));
+-        return SDL_SetError("No system window");
+-    }
+-	
+ #if AROS_BIG_ENDIAN
+     *format = SDL_PIXELFORMAT_BGRA8888;
+ #else
+     *format = SDL_PIXELFORMAT_ARGB8888;
+ #endif
++
++    /* A hidden window has no Intuition window yet. Keep a CPU buffer until
++     * SDL_ShowWindow creates it; UpdateWindowFramebuffer uses memfb then. */
++    if (!data->win) {
++        data->memfb = AllocVec(window->w * window->h * 4, MEMF_CLEAR);
++        if (!data->memfb)
++            return SDL_SetError("Failed to allocate hidden-window framebuffer");
++        *pixels = data->memfb;
++        *pitch = window->w * 4;
++        return true;
++    }
++	
+ 	struct BitMap * friend_bitmap = data->win->RPort->BitMap;
+ 	Uint32 depth =  GetBitMapAttr(friend_bitmap, BMA_DEPTH);
+ 	data->bitmap = AllocBitMap(window->w, window->h, depth, BMF_MINPLANES|BMF_CLEAR, friend_bitmap);

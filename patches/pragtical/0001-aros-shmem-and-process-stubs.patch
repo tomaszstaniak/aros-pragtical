@@ -1,0 +1,305 @@
+Title: 0001-aros-shmem-and-process-stubs
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: none
+Author: aros-pragtical project
+Date: 2026-09-20
+Upstream-Status: candidate
+Scope: AROS
+
+Problem:
+  AROS has no sys/mman.h or fork(); the editor would not compile or link
+Solution:
+  Process-local SDL allocations for shmem; process.spawn returns a Lua error until a later spawn patch. REPL history is disabled in meson, not here.
+Validation:
+  The Pragtical 3.14.0 x86_64 ABIv1 build compiled and linked on 2026-11-15. All six shared-memory runtime tests passed, including region growth and mirror handles. External spawning and cross-process sharing remain unavailable.
+Removal:
+  Replace the local implementations when tested AROS process spawning and cross-process shared memory are available.
+
+diff --git a/src/api/process.c b/src/api/process.c
+index 3b664289..6fb06e4e 100644
+--- a/src/api/process.c
++++ b/src/api/process.c
+@@ -768,7 +768,7 @@ static bool set_property_or_fail(SDL_PropertiesID props, bool ok) {
+   return props && ok;
+ }
+ 
+-#ifndef _WIN32
++#if !defined(_WIN32) && !defined(__AROS__)
+ typedef struct {
+   int fd;
+ } fd_io_t;
+@@ -1049,9 +1049,32 @@ fail:
+   if (envp) SDL_free(envp);
+   return false;
+ }
++#elif defined(__AROS__)
++static bool process_start_posix(
++  const char **args,
++  SDL_Environment *env,
++  const char *cwd,
++  bool detach,
++  int redirects[3],
++  long *pid,
++  SDL_IOStream *streams[3]
++) {
++  (void) args;
++  (void) env;
++  (void) cwd;
++  (void) detach;
++  (void) redirects;
++  (void) pid;
++  (void) streams;
++  SDL_SetError("process spawning is unavailable in this AROS build");
++  return false;
++}
+ #endif
+ 
+ static int process_start(lua_State *L) {
++#ifdef __AROS__
++  return push_error(L, "process spawning is unavailable on AROS", ERROR_INVAL);
++#endif
+   process_t *self = NULL;
+   SDL_Process *process = NULL;
+   SDL_PropertiesID props = 0;
+diff --git a/src/api/shmem.c b/src/api/shmem.c
+index e5e9e54d..0e6d2989 100644
+--- a/src/api/shmem.c
++++ b/src/api/shmem.c
+@@ -23,6 +23,9 @@
+ 
+   typedef HANDLE shmem_handle;
+   typedef HANDLE shmem_mutex_handle;
++#elif defined(__AROS__)
++  typedef int shmem_handle;
++  typedef SDL_Mutex *shmem_mutex_handle;
+ #else
+   #include <errno.h>
+   #include <fcntl.h>
+@@ -69,7 +72,9 @@ typedef struct {
+   shmem_entry entries[];
+ } shmem_namespace;
+ 
+-typedef struct {
++typedef struct shmem_container shmem_container;
++
++typedef struct shmem_region {
+   shmem_handle handle;
+   char name[SHMEM_NS_LEN];
+ #if defined(_WIN32) || defined(__APPLE__)
+@@ -81,6 +86,11 @@ typedef struct {
+   size_t size;
+   void *map;
+   bool created;
++#ifdef __AROS__
++  size_t refs;
++  shmem_container *containers;
++  struct shmem_region *next;
++#endif
+ } shmem_region;
+ 
+ typedef struct {
+@@ -88,11 +98,20 @@ typedef struct {
+   char name[SHMEM_NS_LEN];
+ } shmem_mutex;
+ 
+-typedef struct {
++struct shmem_container {
+   shmem_region *region;
+   shmem_mutex *mutex;
+   shmem_namespace *namespace;
+-} shmem_container;
++#ifdef __AROS__
++  shmem_container *next;
++#endif
++};
++
++#ifdef __AROS__
++static shmem_region *shmem_regions;
++static SDL_Mutex *shmem_aros_mutex;
++static size_t shmem_aros_mutex_refs;
++#endif
+ 
+ typedef struct {
+   shmem_container *container;
+@@ -160,6 +179,8 @@ static inline char *shmem_namespace_data(shmem_container *container) {
+ static uint64_t shmem_current_pid(void) {
+ #ifdef _WIN32
+   return (uint64_t) GetCurrentProcessId();
++#elif defined(__AROS__)
++  return 1;
+ #else
+   return (uint64_t) getpid();
+ #endif
+@@ -179,6 +200,8 @@ static bool shmem_process_alive(uint64_t pid) {
+   DWORD status = WaitForSingleObject(process, 0);
+   CloseHandle(process);
+   return status == WAIT_TIMEOUT;
++#elif defined(__AROS__)
++  return pid == shmem_current_pid();
+ #else
+   if (pid == 0) {
+     return false;
+@@ -218,7 +241,7 @@ static bool shmem_compute_header_size(size_t capacity, size_t *header_size) {
+ }
+ 
+ static bool shmem_region_storage_size(size_t size, size_t *storage_size) {
+-#ifdef _WIN32
++#if defined(_WIN32) || defined(__AROS__)
+   *storage_size = size;
+   return true;
+ #else
+@@ -348,6 +371,23 @@ static bool shmem_region_remap(
+     region->handle = NULL;
+     return false;
+   }
++#elif defined(__AROS__)
++  void *map = SDL_calloc(1, storage_size);
++  if (!map) {
++    SDL_OutOfMemory();
++    return false;
++  }
++
++  if (region->map) {
++    size_t preserved = region->size < storage_size ? region->size : storage_size;
++    SDL_memcpy(map, region->map, preserved);
++    SDL_free(region->map);
++  }
++  region->map = map;
++
++  for (shmem_container *container = region->containers; container; container = container->next) {
++    container->namespace = (shmem_namespace *) map;
++  }
+ #else
+   if (region->map != NULL) {
+     munmap(region->map, region->size);
+@@ -379,6 +419,20 @@ static bool shmem_region_remap(
+ }
+ 
+ static shmem_region *shmem_region_open(const char *name, size_t minimum_size) {
++#ifdef __AROS__
++  for (shmem_region *existing = shmem_regions; existing; existing = existing->next) {
++    if (strcmp(existing->name, name) != 0)
++      continue;
++    if (existing->size < minimum_size) {
++      SDL_SetError("shared memory region '%s' has incompatible capacity or layout", name);
++      return NULL;
++    }
++    existing->refs++;
++    existing->created = false;
++    return existing;
++  }
++#endif
++
+   shmem_region *region = SDL_calloc(1, sizeof(shmem_region));
+   if (!region) {
+     SDL_OutOfMemory();
+@@ -481,6 +535,15 @@ static shmem_region *shmem_region_open(const char *name, size_t minimum_size) {
+     close(region->handle);
+     goto shmem_region_open_error;
+   }
++#elif defined(__AROS__)
++  region->size = minimum_size;
++  region->created = true;
++  if (!shmem_region_remap(region, region->size, true)) {
++    goto shmem_region_open_error;
++  }
++  region->refs = 1;
++  region->next = shmem_regions;
++  shmem_regions = region;
+ #else
+   region->handle = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0666);
+   if (region->handle == -1) {
+@@ -551,6 +614,18 @@ static void shmem_region_close(shmem_region *region, bool unregister) {
+   if (unregister) {
+     unlink(region->path);
+   }
++#elif defined(__AROS__)
++  if (region->refs > 0)
++    region->refs--;
++  if (region->refs > 0)
++    return;
++
++  shmem_region **link = &shmem_regions;
++  while (*link && *link != region)
++    link = &(*link)->next;
++  if (*link == region)
++    *link = region->next;
++  SDL_free(region->map);
+ #else
+   if (region->map != NULL) {
+     munmap(region->map, region->size);
+@@ -580,6 +655,15 @@ static shmem_mutex *shmem_mutex_open(const char *name) {
+     SDL_free(mutex);
+     return NULL;
+   }
++#elif defined(__AROS__)
++  if (!shmem_aros_mutex)
++    shmem_aros_mutex = SDL_CreateMutex();
++  if (!shmem_aros_mutex) {
++    SDL_free(mutex);
++    return NULL;
++  }
++  shmem_aros_mutex_refs++;
++  mutex->handle = shmem_aros_mutex;
+ #else
+   mutex->handle = sem_open(name, O_CREAT, 0666, 1);
+   if (mutex->handle == SEM_FAILED) {
+@@ -595,6 +679,8 @@ static shmem_mutex *shmem_mutex_open(const char *name) {
+ static void shmem_mutex_lock(shmem_mutex *mutex) {
+ #ifdef _WIN32
+   WaitForSingleObject(mutex->handle, INFINITE);
++#elif defined(__AROS__)
++  SDL_LockMutex(mutex->handle);
+ #else
+   sem_wait(mutex->handle);
+ #endif
+@@ -603,6 +689,8 @@ static void shmem_mutex_lock(shmem_mutex *mutex) {
+ static void shmem_mutex_unlock(shmem_mutex *mutex) {
+ #ifdef _WIN32
+   ReleaseMutex(mutex->handle);
++#elif defined(__AROS__)
++  SDL_UnlockMutex(mutex->handle);
+ #else
+   sem_post(mutex->handle);
+ #endif
+@@ -611,6 +699,13 @@ static void shmem_mutex_unlock(shmem_mutex *mutex) {
+ static void shmem_mutex_close(shmem_mutex *mutex, bool unregister) {
+ #ifdef _WIN32
+   CloseHandle(mutex->handle);
++#elif defined(__AROS__)
++  if (shmem_aros_mutex_refs > 0)
++    shmem_aros_mutex_refs--;
++  if (shmem_aros_mutex_refs == 0 && shmem_aros_mutex) {
++    SDL_DestroyMutex(shmem_aros_mutex);
++    shmem_aros_mutex = NULL;
++  }
+ #else
+   sem_close(mutex->handle);
+   if (unregister) {
+@@ -1193,6 +1288,11 @@ static shmem_container *shmem_container_open(
+   }
+   shmem_mutex_unlock(mutex);
+ 
++#ifdef __AROS__
++  container->next = region->containers;
++  region->containers = container;
++#endif
++
+   return container;
+ 
+ shmem_container_open_error:
+@@ -1208,6 +1308,13 @@ static void shmem_container_close(shmem_container *container) {
+   shmem_mutex_unlock(container->mutex);
+ 
+   shmem_mutex_close(container->mutex, unregister);
++#ifdef __AROS__
++  shmem_container **link = &container->region->containers;
++  while (*link && *link != container)
++    link = &(*link)->next;
++  if (*link == container)
++    *link = container->next;
++#endif
+   shmem_region_close(container->region, unregister);
+   SDL_free(container);
+ }

@@ -1,0 +1,102 @@
+Title: 0002-aros-stack-exepath-realpath
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0001-aros-shmem-and-process-stubs.patch
+Author: aros-pragtical project
+Date: 2026-09-20
+Upstream-Status: candidate
+Scope: AROS CRT symbols, EXEFILE, and system.absolute_path only.
+
+Problem:
+  Workbench default stack is too small for SDL3+Lua; get_exe_filename left EXEFILE empty so DATADIR was wrong; posixc hides realpath unless _POSIX_C_SOURCE>=200112L and the 64-bit implicit-int return would truncate.
+Solution:
+  Set CRT __stack to 8 MiB and __nostdiowin=1; fill EXEFILE from SDL_GetBasePath (PROGDIR); call realpath into a PATH_MAX buffer with an explicit prototype.
+Validation:
+  The Pragtical 3.14.0 x86_64 ABIv1 build compiled and linked on 2026-11-15. The editor started, edited and reopened files from a Shell with an explicit 8000000-byte stack. Launcher stack handling without that explicit setting remains unverified.
+Removal:
+  Keep the AROS path handling. Revisit the __stack declaration when the target startup code honors it and runtime checks no longer require an explicit Shell stack.
+
+diff --git a/src/api/system.c b/src/api/system.c
+index b7996950..f9a71789 100644
+--- a/src/api/system.c
++++ b/src/api/system.c
+@@ -791,6 +791,16 @@ static int f_list_dir(lua_State *L) {
+   #define realpath(x, y) _wfullpath(y, x, MAX_PATH)
+ #endif
+ 
++#ifdef __AROS__
++/* posixc hides realpath unless _POSIX_C_SOURCE >= 200112L; gnu11 does
++ * not set that, and the 64-bit implicit-int return would truncate. */
++#include <limits.h>
++#ifndef PATH_MAX
++#define PATH_MAX 1024
++#endif
++char *realpath(const char *, char *);
++#endif
++
+ static int f_absolute_path(lua_State *L) {
+   const char *path = luaL_checkstring(L, 1);
+ #ifdef _WIN32
+@@ -803,13 +813,23 @@ static int f_absolute_path(lua_State *L) {
+ 
+   char *res = utfconv_wctoutf8(wfullpath);
+   SDL_free(wfullpath);
++  if (!res) { return 0; }
++  lua_pushstring(L, res);
++  SDL_free(res);
++  return 1;
++#elif defined(__AROS__)
++  char resolved[PATH_MAX];
++  if (!realpath(path, resolved))
++    return 0;
++  lua_pushstring(L, resolved);
++  return 1;
+ #else
+   char *res = realpath(path, NULL);
+-#endif
+   if (!res) { return 0; }
+   lua_pushstring(L, res);
+   SDL_free(res);
+   return 1;
++#endif
+ }
+ 
+ 
+diff --git a/src/main.c b/src/main.c
+index 76b7ba86..405f6ff4 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -10,6 +10,12 @@
+ #include "renderer/renderer.h"
+ #include "custom_events.h"
+ 
++#ifdef __AROS__
++/* Workbench default stack is far too small for SDL3 + Lua + FreeType. */
++unsigned long __stack = 8UL * 1024UL * 1024UL;
++int __nostdiowin = 1;
++#endif
++
+ #ifdef _WIN32
+   #include <windows.h>
+ #elif defined(__linux__) || defined(__serenity__)
+@@ -51,6 +57,20 @@ static void get_exe_filename(char *buf, int sz) {
+   size_t len = sz;
+   const int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+   sysctl(mib, 4, buf, &len, NULL, 0);
++#elif defined(__AROS__)
++  /* SDL_GetBasePath resolves PROGDIR: and already ends in : or /.
++   * Lua EXEDIR matching only treats '/' as a separator, so force one
++   * after a volume-root path that ends in ':'. */
++  const char *base = SDL_GetBasePath();
++  if (base && *base) {
++    size_t n = SDL_strlen(base);
++    if (n > 0 && base[n - 1] == ':')
++      SDL_snprintf(buf, (size_t)sz, "%s/pragtical", base);
++    else
++      SDL_snprintf(buf, (size_t)sz, "%spragtical", base);
++  } else {
++    *buf = 0;
++  }
+ #else
+   *buf = 0;
+ #endif

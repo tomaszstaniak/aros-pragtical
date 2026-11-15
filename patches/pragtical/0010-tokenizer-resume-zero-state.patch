@@ -1,0 +1,31 @@
+Title: 0010-tokenizer-resume-zero-state
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0009-aros-intuition-menu.patch
+Author: aros-pragtical project
+Date: 2026-11-15
+Upstream-Status: local-only
+Scope: Native tokenizer incomplete-result state only; matching and highlighting rules unchanged
+
+Problem:
+  lua_pushliteral with a NUL literal returns an empty Lua string instead of the required one-byte zero tokenizer state.
+Solution:
+  Push the zero-byte state with an explicit length of one so incomplete native tokenization matches the Lua implementation and resume contract.
+Validation:
+  x86_64 ABIv1 GCC 10.5 build; native tokenizer suite 43/43 passed, including incomplete tokenization resume; language fixtures 2/2 passed.
+Removal:
+  Permanent correctness fix; remove only after the pinned upstream source pushes the one-byte zero state explicitly.
+
+diff --git a/src/api/tokenizer.c b/src/api/tokenizer.c
+index b75b2f8d..a56494cc 100644
+--- a/src/api/tokenizer.c
++++ b/src/api/tokenizer.c
+@@ -2210,7 +2210,7 @@ static int f_tokenizer_tokenize(lua_State *L) {
+       if (tokenizer_get_time() - start_time > max_time) {
+         tokenizer_token_buffer_push(&tokens, &text, "incomplete", i, (lua_Integer) text.char_len);
+         tokenizer_token_buffer_to_lua(L, &tokens, &text);
+-        lua_pushliteral(L, "\0");
++        lua_pushlstring(L, "\0", 1);
+         lua_newtable(L);
+         lua_pushvalue(L, -3);
+         lua_setfield(L, -2, "res");

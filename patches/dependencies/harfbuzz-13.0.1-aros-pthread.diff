@@ -1,0 +1,32 @@
+# HarfBuzz 13.0.1 on AROS: link pthread without GCC's -pthread driver option.
+#
+# Meson's generic threads dependency adds -pthread, which AROS GCC 10.5
+# rejects. Find libpthread directly instead and keep HAVE_PTHREAD enabled
+# when the library is present. Other platforms retain the generic dependency.
+#
+# Validation: the Pragtical 3.14.0 x86_64 ABIv1 build reaches HarfBuzz;
+# final compile/link and runtime results are recorded with the port update.
+#
+--- a/meson.build
++++ b/meson.build
+@@ -327,12 +327,15 @@
+ 
+ # threads
+ thread_dep = null_dep
+-if host_machine.system() != 'windows'
++if host_machine.system() == 'aros'
++  # AROS GCC uses -lpthread and does not accept the driver's -pthread option.
++  thread_dep = cpp.find_library('pthread', required: false)
++elif host_machine.system() != 'windows'
+   thread_dep = dependency('threads', required: false)
+-
+-  if thread_dep.found()
+-    conf.set('HAVE_PTHREAD', 1)
+-  endif
++endif
++
++if host_machine.system() != 'windows' and thread_dep.found()
++  conf.set('HAVE_PTHREAD', 1)
+ endif
+ 
+ foreach check : check_headers

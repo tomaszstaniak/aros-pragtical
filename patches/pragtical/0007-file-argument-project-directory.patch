@@ -1,0 +1,32 @@
+Title: 0007-file-argument-project-directory
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0006-aros-volume-parent.patch
+Author: aros-pragtical project
+Date: 2026-11-01
+Upstream-Status: submitted
+Upstream-Link: https://github.com/pragtical/pragtical/pull/670
+Scope: Startup project selection for file arguments; AROS volume-root reopen.
+
+Problem:
+  The command-line file selection independently uses a slash-only parent matcher, leaving project_dir nil for SYS:file.txt even when common.dirname handles that volume.
+Solution:
+  Use common.dirname for the argument parent and retain the current project if no parent can be determined.
+Validation:
+  The Pragtical 3.14.0 x86_64 ABIv1 build compiled and linked, and the focused file-argument regression passed three cases. Nested and volume-root command-line reopen checks passed with the expected document contents on 2026-11-15.
+Removal:
+  Remove when the pinned upstream contains the merged equivalent and the focused regression plus both x86_64 runtime checks pass.
+
+diff --git a/data/core/init.lua b/data/core/init.lua
+index 987e1c9f..63a35437 100644
+--- a/data/core/init.lua
++++ b/data/core/init.lua
+@@ -524,7 +524,7 @@ function core.init()
+           end
+           if file_abs then
+             table.insert(files, file_abs)
+-            project_dir = file_abs:match("^(.+)[/\\].+$")
++            project_dir = common.dirname(file_abs) or project_dir
+           end
+         end
+       end

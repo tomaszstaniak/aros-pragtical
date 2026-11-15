@@ -1,0 +1,46 @@
+Title: 0005-aros-save-as-volume-root
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0004-aros-home-global.patch
+Author: aros-pragtical project
+Date: 2026-11-01
+Upstream-Status: submitted
+Upstream-Link: https://github.com/pragtical/pragtical/pull/670
+Scope: Save As directory suggestion in data/core/commands/doc.lua; x86_64 v1/v11 port.
+
+Problem:
+  Save As on a new document fails after the previous document was saved directly on an AROS volume because the slash-only parent matcher returns nil.
+Solution:
+  Recognize the AROS volume root, preserve its colon separator, and use an empty suggestion when no parent can be found.
+Validation:
+  The Pragtical 3.14.0 x86_64 ABIv1 build compiled and linked, and the focused Save As regression passed five cases. Runtime Save As offered SYS: after a volume-root document and saved the expected bytes on 2026-11-15.
+Removal:
+  Remove when the pinned upstream contains the merged equivalent and the focused regression plus both x86_64 runtime checks pass.
+
+diff --git a/data/core/commands/doc.lua b/data/core/commands/doc.lua
+index 3696def2..042b556e 100644
+--- a/data/core/commands/doc.lua
++++ b/data/core/commands/doc.lua
+@@ -848,9 +848,19 @@ command.add(can_save, {
+     if dv.doc.filename then
+       text = dv.doc.filename
+     elseif last_doc and last_doc.filename then
+-      local dirname, filename = core.last_active_view.doc.abs_filename:match("(.*)[/\\](.+)$")
+-      text = core.normalize_to_project_dir(dirname) .. PATHSEP
+-      if text == core.root_project().path then text = "" end
++      local dirname = last_doc.abs_filename:match("(.*)[/\\](.+)$")
++      if PLATFORM == "AROS" and not dirname then
++        dirname = last_doc.abs_filename:match("^([^:]+:)")
++      end
++      if dirname then
++        text = core.normalize_to_project_dir(dirname)
++        if not (PLATFORM == "AROS" and text:sub(-1) == ":") then
++          text = text .. PATHSEP
++        end
++        if text == core.root_project().path then text = "" end
++      else
++        text = ""
++      end
+     end
+     if not dv.doc.filename and dv.doc.suggested_extension then
+       text = (text or "") .. dv.doc:get_name()

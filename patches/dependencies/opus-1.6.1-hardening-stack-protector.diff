@@ -1,0 +1,27 @@
+# Opus 1.6.1: make stack protection follow the hardening option.
+#
+# The wrap previously added -fstack-protector-strong on every non-Windows
+# target even with hardening=false. AROS GCC accepts the option but the target
+# runtime does not provide __stack_chk_guard and __stack_chk_fail, so the final
+# static link fails. Keep the flag available with hardening=true and omit it
+# when the user disables the hardening profile.
+#
+# Validation: used by the Pragtical 3.14.0 x86_64 ABIv1 build with
+# -Dopus:hardening=false; final compile/link results are recorded with the
+# port update.
+#
+--- a/meson.build
++++ b/meson.build
+@@ -41,9 +41,9 @@
+     '-Wstrict-prototypes',
+   ]
+ 
+-  # On Windows, -fstack-protector-strong adds a libssp-0.dll dependency and
+-  # prevents static linking
+-  if host_system != 'windows'
++  # Stack protection is part of the optional hardening profile. Some targets
++  # do not provide the runtime symbols required by -fstack-protector-strong.
++  if host_system != 'windows' and get_option('hardening')
+     additional_c_args += ['-fstack-protector-strong']
+   endif
+ endif
