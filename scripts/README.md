@@ -12,6 +12,7 @@ Run commands from the repository root. Bash is required.
 | `scripts/build-sdl3.sh` | Build the static SDL3 library and headers |
 | `scripts/build.sh` | Configure and build Pragtical |
 | `scripts/make-drawer.sh` | Assemble the portable drawer from a finished build |
+| `scripts/make-icon.py` | Write an AROS PNG icon from a PNG picture |
 | `scripts/package.sh` | Safely strip a prepared drawer, update its manifest and verify the package ZIP |
 | `scripts/write-meson-cross.sh` | Generate a Meson cross file from the selected environment |
 

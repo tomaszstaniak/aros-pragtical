@@ -10,7 +10,8 @@ These patches are separate from the Pragtical source series.
 - `sdl3-3.4.12-aros-text-input.diff` translates AROS raw keys into SDL text-input events;
 - `sdl3-3.4.12-hidden-window-framebuffer.diff` provides the CPU framebuffer while a window is still hidden, before Intuition creates its native window;
 - `sdl3-3.4.12-application-menu.diff` lets an application supply an Intuition menu and receive its menu selections as SDL user events;
-- `sdl3-3.4.12-optional-iconv.diff` lets a build without libiconv define `SDL_AROS_NO_ICONV`, so SDL3 uses its own character-set converter. The Raspberry Pi SDK has no libiconv; the x86_64 builds do not set the macro and are unchanged.
+- `sdl3-3.4.12-optional-iconv.diff` lets a build without libiconv define `SDL_AROS_NO_ICONV`, so SDL3 uses its own character-set converter. The Raspberry Pi SDK has no libiconv; the x86_64 builds do not set the macro and are unchanged;
+- `sdl3-3.4.12-aros-charset-clipboard.diff` makes typed characters and clipboard text follow the system character set, and makes copying work. A typed byte was taken to be ISO 8859-1, so a Polish keymap (ISO 8859-2) gave wrong letters; the set now comes from the `CHARSET` variable through codesets.library, with ISO 8859-1 as the fallback. The clipboard writer stored its IFF header as C integers, which is unreadable on little-endian processors; it now writes through iffparse.library. Reading a clip without a UTF8 chunk converts from the system set instead of passing the bytes through.
 
 Applications that do not define `SDL_ArosMenu` retain the stock SDL menu. Pragtical's native New, Select All, About and Quit commands passed on x86_64 ABIv1.
 

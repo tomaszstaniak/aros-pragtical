@@ -1,0 +1,411 @@
+--- a/src/video/aros/SDL_arosclipboard.c
++++ b/src/video/aros/SDL_arosclipboard.c
+@@ -39,159 +39,58 @@
+ #define ID_CHRS	MAKE_ID('C','H','R','S')
+ #define ID_UTF8	MAKE_ID('U','T','F','8')
+ 
+-STATIC APTR clipboard_open(void)
++/* The clip is written through iffparse.library, which stores chunk
++ * identifiers and sizes big-endian whatever the processor. Writing the
++ * header as C integers produced an unreadable clip on little-endian
++ * machines, so nothing could be copied.
++ *
++ * CHRS holds the text in the system character set, as other AROS programs
++ * expect; UTF8 holds the original, and is what this driver reads back.
++ */
++STATIC BOOL clipboard_write_chunk(struct IFFHandle *clip, ULONG id, CONST_STRPTR data, LONG len)
+ {
+-	struct IOClipReq *io;
+-	struct MsgPort *mp;
+-
+-	mp = CreateMsgPort();
+-
+-	if ((io = (struct IOClipReq *)CreateIORequest(mp,sizeof(struct IOClipReq)))) {
+-		if (!(OpenDevice("clipboard.device", 0, (struct IORequest *)io, 0))) {
+-			return io;
+-		}
+-
+-		DeleteIORequest((struct IORequest *)io);
+-	}
+-
+-	DeleteMsgPort(mp);
+-	return NULL;
++	if (PushChunk(clip, 0, id, len))
++		return FALSE;
++	if (WriteChunkBytes(clip, (APTR)data, len) != len)
++		return FALSE;
++	return PopChunk(clip) == 0;
+ }
+ 
+-STATIC ULONG clipboard_write_data(struct IOClipReq *io, CONST_APTR data, ULONG len)
+-{
+-	LONG rc;
+-
+-	io->io_Command = CMD_WRITE;
+-	io->io_Data    = (APTR)data;
+-	io->io_Length  = len;
+-	DoIO( (struct IORequest *)io);
+-
+-	if (io->io_Actual != len) {
+-		io->io_Error = 1;
+-	}
+-
+-	rc = io->io_Error ? FALSE : TRUE;
+-	return rc;
+-}
+-
+-
+-STATIC VOID clipboard_pad_text(struct IOClipReq *io, ULONG textlen)
+-{
+-	if (textlen & 1)
+-		clipboard_write_data(io, "", 1);
+-}
+-
+-
+-STATIC ULONG clipboard_write_header_and_text(struct IOClipReq *io, CONST_STRPTR string, ULONG slen, ULONG ulen)
+-{
+-	ULONG rc;
+-
+-	struct
+-	{
+-		ULONG form;
+-		ULONG totalsize;
+-		ULONG ftxt;
+-		ULONG type;
+-		ULONG strlen;
+-	} iffheader;
+-
+-	io->io_Offset = 0;
+-	io->io_Error  = 0;
+-//	io->io_ClipID = 0;
+-
+-	iffheader.form      = ID_FORM;
+-	iffheader.totalsize = (slen & 1 ? slen + 1 : slen) + (ulen & 1 ? ulen + 1 : ulen) + 12 + 8;
+-	iffheader.ftxt      = ID_FTXT;
+-	iffheader.type      = ID_CHRS;
+-	iffheader.strlen    = slen;
+-
+-	rc = FALSE;
+-
+-	if (clipboard_write_data(io, &iffheader, sizeof(iffheader))) {
+-		if (clipboard_write_data(io, string, slen)) {
+-			clipboard_pad_text(io, slen);
+-			rc = TRUE;
+-		}
+-	}
+-
+-	return rc;
+-}
+-
+-
+-STATIC ULONG clipboard_write_utf8(struct IOClipReq *io, CONST_STRPTR utext, ULONG ulen)
+-{
+-	ULONG rc;
+-
+-	struct
+-	{
+-		ULONG type;
+-		ULONG strlen;
+-	} utf8_header;
+-
+-	/* FIXME: For correct operation we should also store font name. Used font
+-	 * is relevant with guides written in Japanese for example.
+-	 */
+-
+-	utf8_header.type   = ID_UTF8;
+-	utf8_header.strlen = ulen;
+-
+-	rc = FALSE;
+-
+-	if (clipboard_write_data(io, &utf8_header, sizeof(utf8_header))) {
+-		if (clipboard_write_data(io, utext, ulen)) {
+-			clipboard_pad_text(io, ulen);
+-			rc = TRUE;
+-		}
+-	}
+-
+-	return rc;
+-}
+-
+-STATIC VOID clipboard_finalize(struct IOClipReq *io)
+-{
+-	io->io_Command = CMD_UPDATE;
+-	DoIO((struct IORequest *)io);
+-}
+-
+-STATIC void clipboard_close(struct IOClipReq *io)
+-{
+-	if (io) {
+-		struct MsgPort *mp = io->io_Message.mn_ReplyPort;
+-
+-		CloseDevice((struct IORequest *)io);
+-		DeleteIORequest((struct IORequest *)io);
+-		DeleteMsgPort(mp);
+-	}
+-}
+-
+ bool
+ AROS_SetClipboardText(SDL_VideoDevice *_this, const char *text)
+ {
+-	APTR ctx;
+-	int rc = -1;
++	struct IFFHandle *clip;
++	char *stext;
++	bool result = false;
+ 
+-	if ((ctx = clipboard_open())) {
+-		char *stext = NULL;
+-		
+-		stext = AROS_ConvertUTF8Text(text);
++	if (!text)
++		text = "";
++	stext = AROS_ConvertUTF8Text(text);
++	if (!stext)
++		return false;
+ 
+-		if (stext) {
+-			int ulen = strlen(text);
++	if ((clip = AllocIFF())) {
++		clip->iff_Stream = (IPTR)OpenClipboard(0);
+ 
+-			if (clipboard_write_header_and_text(ctx, stext, strlen(stext), ulen)) {
+-				if (clipboard_write_utf8(ctx, text, ulen))
+-					rc = 0;
+-			}
++		if (clip->iff_Stream) {
++			InitIFFasClip(clip);
+ 
+-			SDL_free(stext);
+-			clipboard_finalize(ctx);
++			if (!OpenIFF(clip, IFFF_WRITE)) {
++				if (!PushChunk(clip, ID_FTXT, ID_FORM, IFFSIZE_UNKNOWN)) {
++					if (clipboard_write_chunk(clip, ID_CHRS, (CONST_STRPTR)stext, (LONG)SDL_strlen(stext))
++					 && clipboard_write_chunk(clip, ID_UTF8, (CONST_STRPTR)text, (LONG)SDL_strlen(text))
++					 && PopChunk(clip) == 0)
++						result = true;
++				}
++				CloseIFF(clip);
++			}
++			CloseClipboard((struct ClipboardHandle *)clip->iff_Stream);
+ 		}
+-		
+-		clipboard_close(ctx);
++		FreeIFF(clip);
+ 	}
+ 
+-	return (rc == 0);
++	SDL_free(stext);
++	return result;
+ }
+ 
+ char *
+--- a/src/video/aros/SDL_arosevents.c
++++ b/src/video/aros/SDL_arosevents.c
+@@ -35,6 +35,7 @@
+ #include "SDL_aroswindow.h"
+ #include "SDL_arosopengl.h"
+ #include "SDL_arosmouse.h"
++#include "SDL_arosmisc.h"
+ 
+ #include <devices/rawkeycodes.h>
+ #include <intuition/extensions.h>
+@@ -135,9 +136,11 @@
+ 	 * character. keymap.library translates the raw key instead, the same way
+ 	 * AROS_MapRawKey() in SDL_aroskeyboard.c already does.
+ 	 *
+-	 * MapRawKey() yields Latin-1 while SDL expects UTF-8, so the byte is
+-	 * encoded here. ie_EventAddress stays NULL, matching the existing call in
+-	 * SDL_aroskeyboard.c; dead keys therefore do not compose. Control codes
++	 * MapRawKey() yields a byte of the system character set (ISO 8859-2
++	 * with a Polish keymap, for example) while SDL expects UTF-8, so the
++	 * byte is looked up and encoded here. For a raw key Intuition's IAddress
++	 * points at the address of the previous key codes; handing that to
++	 * MapRawKey() lets dead keys compose (circumflex, then e). Control codes
+ 	 * are left out: SDL discards them anyway, and Backspace, Tab and Return
+ 	 * arrive as key events. */
+ 	/* Declared the same way in SDL_aroskeyboard.c: <proto/keymap.h> does not
+@@ -150,7 +153,7 @@
+ 	ie.ie_SubClass = 0;
+ 	ie.ie_Code = m->Code;
+ 	ie.ie_Qualifier = m->Qualifier;
+-	ie.ie_EventAddress = NULL;
++	ie.ie_EventAddress = m->IAddress ? *((APTR *)m->IAddress) : NULL;
+ 
+ 	if (MapRawKey(&ie, (STRPTR)mapped, sizeof(mapped), NULL) == 1) {
+ 		const UBYTE c = mapped[0];
+@@ -158,10 +161,13 @@
+ 		if (c >= 0x20 && c < 0x80) {
+ 			buffer[0] = (char)c;
+ 			length = 1;
+-		} else if (c >= 0xA0) {
+-			buffer[0] = (char)(0xC0 | (c >> 6));
+-			buffer[1] = (char)(0x80 | (c & 0x3F));
+-			length = 2;
++		} else if (c >= 0x80) {
++			const Uint32 ucs4 = AROS_SystemCharToUCS4(c);
++
++			if (ucs4 >= 0xA0) {
++				char *end = SDL_UCS4ToUTF8(ucs4, buffer);
++				length = (int)(end - buffer);
++			}
+ 		}
+ 	}
+ #endif
+--- a/src/video/aros/SDL_arosmisc.c
++++ b/src/video/aros/SDL_arosmisc.c
+@@ -22,43 +22,97 @@
+ 
+ #include "SDL_arosmisc.h"
+ 
++#include <proto/exec.h>
+ #include <proto/dos.h>
++#include <libraries/codesets.h>
++#include <proto/codesets.h>
+ #ifndef EXEC_TYPES_H
+ #include <exec/types.h>
+ #endif
+ #include <sys/types.h>
+ 
+-// Convert UTF-8 to ISO-8859-1
++/* The system character set.
++ *
++ * AROS has no call that names it. Locale preferences store a
++ * codesets.library name in the CHARSET variable, and keymaps and classic
++ * text clipboards use that set: with pc105_pl the key for "a ogonek" gives
++ * 0xB1, which is ISO 8859-2. codesets.library supplies the table from byte
++ * to Unicode. Without the library or the variable the set is taken to be
++ * ISO 8859-1, where byte and code point are equal.
++ */
++static Uint32 aros_charset[256];
++static bool aros_charset_ready = false;
++
++static void AROS_InitCharset(void)
++{
++    struct Library *CodesetsBase; /* local: hides the global the proto header declares */
++    int i;
++
++    if (aros_charset_ready)
++        return;
++    for (i = 0; i < 256; i++)
++        aros_charset[i] = (Uint32)i;
++
++    CodesetsBase = OpenLibrary((CONST_STRPTR)"codesets.library", 6);
++    if (CodesetsBase) {
++        struct TagItem strict[] = { { CSA_FallbackToDefault, FALSE }, { TAG_DONE, 0 } };
++        struct TagItem fallback[] = { { CSA_FallbackToDefault, TRUE }, { TAG_DONE, 0 } };
++        struct codeset *set = NULL;
++        char name[64];
++
++        if (GetVar((CONST_STRPTR)"CHARSET", (STRPTR)name, sizeof(name), 0) > 0)
++            set = CodesetsFindA((STRPTR)name, strict);
++        if (!set)
++            set = CodesetsFindA(NULL, fallback);
++        if (set) {
++            for (i = 0x80; i < 256; i++) {
++                if (set->table[i].ucs4 >= 0x80)
++                    aros_charset[i] = set->table[i].ucs4;
++            }
++        }
++        CloseLibrary(CodesetsBase);
++    }
++    aros_charset_ready = true;
++}
++
++// One byte of the system character set as a Unicode code point
++Uint32 AROS_SystemCharToUCS4(unsigned char c)
++{
++    AROS_InitCharset();
++    return aros_charset[c];
++}
++
++// Convert UTF-8 to the system character set; '?' for what it cannot hold
+ char *AROS_ConvertUTF8Text(const char *src)
+ {
+     if (!src)
+         return NULL;
+ 
+-    // Worst-case: every byte becomes one ASCII char + null terminator
+-    size_t len = 0;
+-    const char *p = src;
+-    while (*p)
+-        len++, p++;
++    AROS_InitCharset();
+ 
++    size_t len = SDL_strlen(src);
+     char *dst = SDL_malloc(len + 1);
+     if (!dst)
+         return NULL;
+ 
++    const char *p = src;
++    size_t left = len;
+     size_t out = 0;
+-    while (*src) {
+-        unsigned char c = (unsigned char)*src;
+-        if (c < 0x80) {
+-            dst[out++] = *src++;
++    while (left > 0) {
++        Uint32 cp = SDL_StepUTF8(&p, &left);
++        if (cp == 0)
++            break;
++        if (cp < 0x80) {
++            dst[out++] = (char)cp;
+         } else {
+-            if ((c & 0xE0) == 0xC0)
+-                src += 2;
+-            else if ((c & 0xF0) == 0xE0)
+-                src += 3;
+-            else if ((c & 0xF8) == 0xF0)
+-                src += 4;
+-            else
+-                src++;
+-            dst[out++] = '?';
++            int i, found = -1;
++            for (i = 0x80; i < 256; i++) {
++                if (aros_charset[i] == cp) {
++                    found = i;
++                    break;
++                }
++            }
++            dst[out++] = (found >= 0) ? (char)found : '?';
+         }
+     }
+ 
+@@ -66,18 +120,25 @@
+     return dst;
+ }
+ 
+-// Convert ISO-8859-1 to UTF-8
++// Convert the system character set to UTF-8
+ char *AROS_ConvertTextUTF8(const char *src)
+ {
+     if (!src)
+         return NULL;
+ 
++    AROS_InitCharset();
++
+     size_t len = SDL_strlen(src);
+-    char *dst = SDL_malloc(len + 1);
++    char *dst = SDL_malloc(len * 4 + 1);
+     if (!dst)
+         return NULL;
+ 
+-    SDL_memcpy(dst, src, len + 1);
++    char *out = dst;
++    while (*src) {
++        out = SDL_UCS4ToUTF8(aros_charset[(unsigned char)*src], out);
++        src++;
++    }
++    *out = '\0';
+     return dst;
+ }
+ 
+--- a/src/video/aros/SDL_arosmisc.h
++++ b/src/video/aros/SDL_arosmisc.h
+@@ -26,6 +26,7 @@
+ #include <exec/types.h>
+ #endif
+ 
++extern Uint32 AROS_SystemCharToUCS4(unsigned char c);
+ extern char *AROS_ConvertUTF8Text(const char *src);
+ extern char *AROS_ConvertTextUTF8(const char *src);
+ extern char *AROS_ConvertPath(const char *fn);

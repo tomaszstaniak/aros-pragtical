@@ -127,16 +127,16 @@ A portable drawer needs the `pragtical` executable, its upstream `data/` and `do
 Assemble the drawer from a finished build and create its archive with:
 
 ```sh
-AROS_TARGET=mainline scripts/make-drawer.sh 3.14.0-aros1
+AROS_TARGET=mainline scripts/make-drawer.sh 3.14.0-aros2
 AROS_TARGET=mainline scripts/package.sh \
   build/mainline/drawer/Pragtical \
-  dist/3.14.0-aros1/pragtical-3.14.0-aros1-aros-x86_64-abiv1-pc.zip
+  dist/3.14.0-aros2/pragtical-3.14.0-aros2-aros-x86_64-abiv1-pc.zip
 ```
 
-`make-drawer.sh` takes the program and its data from `meson install`, adds the licence, `packaging/README-AROS.txt`, the launcher and a `BUILD-MANIFEST.json` without machine paths.
+`make-drawer.sh` takes the program and its data from `meson install`, adds the licence, `packaging/README-AROS.txt`, the launcher, the icons (`scripts/make-icon.py`, stack 8000000 in the program icon), a `BUILD-MANIFEST.json` without machine paths and the apkg package description. The number after `-aros` in the release name is the package revision. `package.sh` needs `APKG_PACK` to point at `apkg-pack.pyz`.
 
 The script applies `--strip-unneeded --remove-section .comment`, records the stripped and unstripped hashes in the manifest, writes `SHA256SUMS`, and checks the archive through an independent extraction. It does not change compiler optimization or runtime-test claims.
 
 Test the extracted package rather than only the build directory. Check document open, edit, save, reopen and clean exit from that extracted copy.
 
-Release `3.14.0-aros1` in `dist/3.14.0-aros1/` holds one archive per target. Each was tested from the archive on its target; the stripped programs and the archive contents were scanned for build-machine paths. A full strip fails on x86_64; the safe strip form above also runs on the Raspberry Pi.
+Release `3.14.0-aros2` in `dist/3.14.0-aros2/` holds one archive per target, built by apkg-pack with an embedded package description, icons and `application.json`. Each was tested from the archive on its target; the stripped programs and the archive contents were scanned for build-machine paths. A full strip fails on x86_64; the safe strip form above also runs on the Raspberry Pi.

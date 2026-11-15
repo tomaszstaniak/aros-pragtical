@@ -9,3 +9,5 @@
 0009-aros-intuition-menu.patch
 0010-tokenizer-resume-zero-state.patch
 0011-aros-directory-notification.patch
+0012-aros-volume-path-before-realpath.patch
+0013-aros-current-directory-without-slash.patch

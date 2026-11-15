@@ -42,6 +42,33 @@ cp "$WORK_DIR/LICENSE" "$DRAWER/LICENSE"
 cp "$PROJECT_ROOT/packaging/README-AROS.txt" "$DRAWER/README-AROS.txt"
 printf 'Stack 8000000\npragtical\n' > "$DRAWER/run-pragtical"
 
+# Icons: the program icon carries the stack the editor needs, so a start
+# from Workbench works; the drawer icon sits beside the drawer.
+ICON_PNG="$PROJECT_ROOT/packaging/pragtical-icon.png"
+python3 "$SCRIPT_DIR/make-icon.py" "$ICON_PNG" "$DRAWER/pragtical.info" --type tool --stack 8000000
+python3 "$SCRIPT_DIR/make-icon.py" "$ICON_PNG" "$STAGE/Pragtical.info" --type drawer
+
+# Package description for apkg-pack, one per target.
+REVISION="${RELEASE##*-aros}"
+case "$REVISION" in ''|*[!0-9]*) echo "make-drawer: release name must end in -aros<number>" >&2; exit 1 ;; esac
+case "$AROS_TARGET" in
+  raspi)    PKG_ARCH=aarch64; PKG_ABI=v1;  RUNTIME_LIBS="posixc.library stdc.library stdcio.library" ;;
+  mainline) PKG_ARCH=x86_64;  PKG_ABI=v1;  RUNTIME_LIBS="posixc.library stdc.library stdcio.library" ;;
+  *)        PKG_ARCH=x86_64;  PKG_ABI=v11; RUNTIME_LIBS="crt.library stdlib.library m.library" ;;
+esac
+{
+  sed -e "s/@VERSION@/${RELEASE%%-*}/" -e "s/@REVISION@/$REVISION/" \
+      -e "s/@ARCH@/$PKG_ARCH/" -e "s/@ABI@/$PKG_ABI/" \
+      "$PROJECT_ROOT/packaging/Pragtical.arospkg.toml.in"
+  for lib in $RUNTIME_LIBS cybergraphics.library gadtools.library gl.library icon.library \
+             iffparse.library keymap.library lowlevel.library muimaster.library \
+             commodities.library workbench.library z1.library; do
+    printf '\n[[requires_system]]\ntype = "library"\nid = "%s"\n' "$lib"
+  done
+  printf '\n[source]\nrepository = "https://github.com/tomaszstaniak/aros-pragtical"\nrevision = "v%s"\n' "$RELEASE"
+  printf '\n[launch]\nexecutable = "pragtical"\nmode       = "workbench"\n'
+} > "$STAGE/Pragtical.arospkg.toml"
+
 python3 - "$DRAWER/BUILD-MANIFEST.json" "$RELEASE" "$AROS_TARGET_NAME" \
   "$(git -C "$WORK_DIR" config project.base || true)" \
   "$(git -C "$WORK_DIR" rev-parse HEAD)" \

@@ -1,0 +1,37 @@
+Title: 0013-aros-current-directory-without-slash
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0012-aros-volume-path-before-realpath.patch
+Author: aros-pragtical project
+Date: 2026-11-15
+Upstream-Status: candidate
+Scope: AROS only, src/api/system.c f_absolute_path.
+
+Problem:
+  Started without a file or directory argument (from its icon, or from a Shell), the editor took the current directory with a trailing slash as its project. Paths built on it contain '//', which AmigaDOS reads as the parent directory, so the project tree showed the contents one level up.
+Solution:
+  Strip the trailing slash from the current directory in system.absolute_path, except after a volume colon.
+Validation:
+  2026-11-15, mainline nightly 20261113, AROS One 1.3 and Raspberry Pi: started with WBRun and from a Shell without arguments, the project tree shows the current drawer; before it showed the parent.
+Removal:
+  Permanent.
+
+diff --git a/src/api/system.c b/src/api/system.c
+index 7fcce90a..e5a9bc4d 100644
+--- a/src/api/system.c
++++ b/src/api/system.c
+@@ -855,8 +855,14 @@ static int f_absolute_path(lua_State *L) {
+    * the current AmigaDOS directory. */
+   if (path[0] == '\0' || strcmp(path, ".") == 0 || strcmp(path, "./") == 0) {
+     char *cwd = SDL_GetCurrentDirectory();
++    size_t n;
+     if (!cwd)
+       return 0;
++    /* SDL ends the name with a slash. A path built on it would contain
++     * "//", which AmigaDOS reads as the parent directory. */
++    n = strlen(cwd);
++    if (n > 1 && cwd[n - 1] == '/' && cwd[n - 2] != ':')
++      cwd[n - 1] = '\0';
+     lua_pushstring(L, cwd);
+     SDL_free(cwd);
+     return 1;

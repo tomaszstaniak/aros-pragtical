@@ -87,14 +87,28 @@ PY
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aros-pragtical-package.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
 ARCHIVE="$TMP_DIR/package.zip"
-(
-  cd "$(dirname "$DRAWER")"
-  zip -q -9 -r "$ARCHIVE" Pragtical
-)
+DESCRIPTION="$(dirname "$DRAWER")/Pragtical.arospkg.toml"
+if [ -f "$DESCRIPTION" ]; then
+  # A drawer prepared by make-drawer.sh has a package description beside
+  # it. apkg-pack then writes the archive: the drawer, its icon, the
+  # embedded manifest and application.json.
+  [ -n "${APKG_PACK:-}" ] && [ -f "$APKG_PACK" ] || {
+    echo "package: set APKG_PACK to apkg-pack.pyz (local.env)" >&2
+    exit 1
+  }
+  python3 "$APKG_PACK" check "$DRAWER"
+  python3 "$APKG_PACK" build "$DRAWER" --output "$ARCHIVE"
+  python3 "$APKG_PACK" check "$ARCHIVE"
+else
+  (
+    cd "$(dirname "$DRAWER")"
+    zip -q -9 -r "$ARCHIVE" Pragtical
+  )
+fi
 unzip -t "$ARCHIVE" >/dev/null
 mkdir "$TMP_DIR/extracted"
 unzip -q "$ARCHIVE" -d "$TMP_DIR/extracted"
-diff -qr "$DRAWER" "$TMP_DIR/extracted/Pragtical"
+diff -qr -x application.json "$DRAWER" "$TMP_DIR/extracted/Pragtical"
 mv "$ARCHIVE" "$OUTPUT"
 (
   cd "$(dirname "$OUTPUT")"

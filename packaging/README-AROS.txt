@@ -20,13 +20,13 @@ Installation
 Extract the archive anywhere on a writable disk. Keep the data, doc and
 user drawers beside the program.
 
-Start it from a Shell opened in the Pragtical drawer:
+Start it with a double-click on the pragtical icon; the icon sets the
+stack the editor needs. From a Shell opened in the Pragtical drawer:
 
   Execute run-pragtical
 
-The launcher raises the stack to 8000000 bytes, which the editor needs.
-To open a file or a project directory, raise the stack yourself and pass
-the path:
+To open a file or a project directory from a Shell, raise the stack
+yourself and pass the path:
 
   Stack 8000000
   pragtical Work:myproject
@@ -41,6 +41,10 @@ What works
 - Project tree, find in files, autocompletion, code folding, diff view,
   line wrapping, macros, workspaces, the settings window.
 - Native AROS menus.
+- Text is UTF-8. Characters typed on the keyboard follow the system
+  character set chosen in the Locale preferences, so a Polish keymap
+  gives Polish letters.
+- Copy and paste through the system clipboard.
 - Files and drawers changed outside the editor: on the RAM disk and on
   SFS volumes the project tree follows such changes at once, and the
   editor offers to reload an open document that was changed. On other

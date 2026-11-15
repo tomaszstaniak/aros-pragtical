@@ -1,6 +1,6 @@
 # Pragtical for AROS
 
-This repository contains the build recipe, tests and patch series for a Pragtical 3.14.0 port to AROS with SDL3. Release 3.14.0-aros1 covers x86_64 ABIv11 distributions, x86_64 mainline AROS (ABIv1) and the Raspberry Pi.
+This repository contains the build recipe, tests and patch series for a Pragtical 3.14.0 port to AROS with SDL3. Release 3.14.0-aros2 covers x86_64 ABIv11 distributions, x86_64 mainline AROS (ABIv1) and the Raspberry Pi.
 
 Pragtical 3.14.0 has passed bounded checks on each target covering start, editing, saving, changes made outside the editor and the extracted package; the Raspberry Pi build was run under QEMU only. These checks do not qualify the full plugin ecosystem or every editor feature.
 
