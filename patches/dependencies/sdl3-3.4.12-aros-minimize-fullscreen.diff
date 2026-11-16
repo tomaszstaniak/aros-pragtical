@@ -1,6 +1,6 @@
 diff --color -ruN a/src/video/aros/SDL_arosevents.c b/src/video/aros/SDL_arosevents.c
 --- a/src/video/aros/SDL_arosevents.c	2026-11-16 08:25:18
-+++ b/src/video/aros/SDL_arosevents.c	2026-11-16 12:25:00
++++ b/src/video/aros/SDL_arosevents.c	2026-11-16 13:41:53
 @@ -309,7 +309,12 @@
  
  	switch (((struct Gadget *)m->IAddress)->GadgetID) {
@@ -15,7 +15,27 @@ diff --color -ruN a/src/video/aros/SDL_arosevents.c b/src/video/aros/SDL_aroseve
  			break;
  		case ETI_Jump:
  			D(bug("[SDL3:arosevt] %s: ETI_JUMP\n", __func__));
-@@ -843,6 +848,20 @@
+@@ -791,8 +796,8 @@
+ 
+ 							D(bug("[SDL3:arosevt] %s: SDL_SendDropfile : '%s'\n", __func__, filename));
+ 							SDL_SendDropFile(window, NULL, filename);
+-							argptr++;
+ 						}
++						argptr++;
+ 					}
+ 					SDL_SendDropComplete(window);
+                     SDL_RaiseWindow(window);
+@@ -806,6 +811,9 @@
+ 				break;
+ 		}
+ 
++		/* Workbench waits for the reply while it holds its locks; without
++		 * it a drop on the window freezes the desktop. */
++		ReplyMsg(&msg->am_Message);
+ 	}
+ }
+ 
+@@ -843,6 +851,20 @@
  
                  AROS_DispatchEvent(_this, m);
                  ReplyMsg((struct Message *)m);
@@ -38,7 +58,7 @@ diff --color -ruN a/src/video/aros/SDL_arosevents.c b/src/video/aros/SDL_aroseve
              if (wdata && check_mousecoord && wdata->win) {
 diff --color -ruN a/src/video/aros/SDL_arosvideo.c b/src/video/aros/SDL_arosvideo.c
 --- a/src/video/aros/SDL_arosvideo.c	2026-11-16 08:25:18
-+++ b/src/video/aros/SDL_arosvideo.c	2026-11-16 12:25:00
++++ b/src/video/aros/SDL_arosvideo.c	2026-11-16 13:41:53
 @@ -171,6 +171,8 @@
          if (win) {
              AROS_SetWindowOpacity(_this, wd->window, 1.0);
@@ -77,7 +97,7 @@ diff --color -ruN a/src/video/aros/SDL_arosvideo.c b/src/video/aros/SDL_arosvide
  			device->SetWindowIcon = AROS_SetWindowIcon;
 diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswindow.c
 --- a/src/video/aros/SDL_aroswindow.c	2026-11-16 08:25:18
-+++ b/src/video/aros/SDL_aroswindow.c	2026-11-16 12:25:00
++++ b/src/video/aros/SDL_aroswindow.c	2026-11-16 13:41:53
 @@ -134,6 +134,8 @@
  		ModifyIDCMP(win, 0);
  
@@ -415,7 +435,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  
 diff --color -ruN a/src/video/aros/SDL_aroswindow.h b/src/video/aros/SDL_aroswindow.h
 --- a/src/video/aros/SDL_aroswindow.h	2026-11-16 08:25:18
-+++ b/src/video/aros/SDL_aroswindow.h	2026-11-16 12:25:00
++++ b/src/video/aros/SDL_aroswindow.h	2026-11-16 13:41:53
 @@ -84,6 +84,8 @@
  	BYTE grabbed;
  	BYTE first_deltamove;
