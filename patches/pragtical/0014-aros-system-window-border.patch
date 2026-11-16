@@ -1,0 +1,48 @@
+Title: 0014-aros-system-window-border
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0013-aros-current-directory-without-slash.patch
+Author: aros-pragtical project
+Date: 2026-11-16
+Upstream-Status: local-only
+Scope: AROS only, default of config.borderless in data/core/config.lua and the settings plugin.
+
+Problem:
+  The editor drew its own title bar and window buttons by default. On AROS the window then had no system border, could not be dragged or depth-arranged like other windows, and its drawn buttons behaved unlike Intuition gadgets.
+Solution:
+  Default config.borderless to false on AROS, so the window gets the Intuition border, drag bar and gadgets. The setting stays available.
+Validation:
+  2026-11-16, mainline nightly 20261113, AROS One 1.3 and Raspberry Pi nightly 20261110 in QEMU: the editor opens with the Intuition border and gadgets; drag bar, close gadget and iconify gadget work.
+Removal:
+  Permanent for the AROS port.
+
+diff --git a/data/core/config.lua b/data/core/config.lua
+index 3967cc3e..29e5875b 100644
+--- a/data/core/config.lua
++++ b/data/core/config.lua
+@@ -384,9 +384,10 @@ config.draw_whitespace = false
+ ---When set to true, Pragtical draws its own window decorations,
+ ---which can be useful for certain setups.
+ ---
+----Defaults to true.
++---Defaults to true, except on AROS, where the window gets the system's
++---own border and gadgets.
+ ---@type boolean
+-config.borderless = true
++config.borderless = PLATFORM ~= "AROS"
+ 
+ ---Shows/hides the close buttons on tabs.
+ ---When hidden, users can close tabs via keyboard shortcuts or commands.
+diff --git a/data/plugins/settings.lua b/data/plugins/settings.lua
+index 167da1c5..8facdc6a 100644
+--- a/data/plugins/settings.lua
++++ b/data/plugins/settings.lua
+@@ -496,7 +496,7 @@ settings.add("User Interface",
+       description = "Use built-in window decorations.",
+       path = "borderless",
+       type = settings.type.TOGGLE,
+-      default = true,
++      default = PLATFORM ~= "AROS",
+       on_apply = function()
+         core.configure_borderless_window()
+       end

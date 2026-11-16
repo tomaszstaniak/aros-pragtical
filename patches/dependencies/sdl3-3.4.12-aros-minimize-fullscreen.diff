@@ -1,0 +1,386 @@
+diff --color -ruN a/src/video/aros/SDL_arosevents.c b/src/video/aros/SDL_arosevents.c
+--- a/src/video/aros/SDL_arosevents.c	2026-11-16 08:25:18
++++ b/src/video/aros/SDL_arosevents.c	2026-11-16 11:31:58
+@@ -309,7 +309,12 @@
+ 
+ 	switch (((struct Gadget *)m->IAddress)->GadgetID) {
+ 		case ETI_Iconify:
+-			AROS_HideApp(_this, TRUE);
++			{
++				SDL_WindowData *data = (SDL_WindowData *)m->IDCMPWindow->UserData;
++
++				if (data)
++					data->minimize_pending = 1;
++			}
+ 			break;
+ 		case ETI_Jump:
+ 			D(bug("[SDL3:arosevt] %s: ETI_JUMP\n", __func__));
+@@ -843,6 +848,20 @@
+ 
+                 AROS_DispatchEvent(_this, m);
+                 ReplyMsg((struct Message *)m);
++            }
++
++            {
++                SDL_WindowData *wd;
++
++                ForeachNode(&data->windowlist, wd)
++                {
++                    if (wd->minimize_pending) {
++                        wd->minimize_pending = 0;
++                        if (wdata == wd)
++                            wdata = NULL;
++                        SDL_MinimizeWindow(wd->window);
++                    }
++                }
+             }
+ 
+             if (wdata && check_mousecoord && wdata->win) {
+diff --color -ruN a/src/video/aros/SDL_arosvideo.c b/src/video/aros/SDL_arosvideo.c
+--- a/src/video/aros/SDL_arosvideo.c	2026-11-16 08:25:18
++++ b/src/video/aros/SDL_arosvideo.c	2026-11-16 11:31:58
+@@ -171,6 +171,8 @@
+         if (win) {
+             AROS_SetWindowOpacity(_this, wd->window, 1.0);
+             AROS_WindowToFront(win);
++        } else if (wd->sdlflags & SDL_WINDOW_MINIMIZED) {
++            AROS_RestoreWindow(_this, wd->window);
+         }
+     }
+ 
+@@ -202,6 +204,17 @@
+ {
+ 	D(bug("[SDL3:arosvideo] %s()\n", __func__));
+ 
++	SDL_VideoData *data = (SDL_VideoData *) _this->internal;
++
++	if (data->AppIconRef) {
++		struct Message *msg;
++
++		RemoveAppIcon(data->AppIconRef);
++		data->AppIconRef = NULL;
++		while ((msg = GetMsg(&data->WBPort)) != NULL)
++			ReplyMsg(msg);
++	}
++
+ 	AROS_CloseWindows(_this);
+ 	AROS_CloseDisplay(_this);
+ 	AROS_QuitMouse(_this);
+@@ -403,6 +416,8 @@
+ 			device->SetDisplayMode = AROS_SetDisplayMode;
+ 			device->SuspendScreenSaver = AROS_SuspendScreenSaver;
+ 			device->PumpEvents = AROS_PumpEvents;
++			/* SetWindowFullscreen reports the size the window really got. */
++			device->device_caps |= VIDEO_DEVICE_CAPS_SENDS_FULLSCREEN_DIMENSIONS;
+ 			device->CreateSDLWindow = AROS_CreateWindow;
+ 			device->SetWindowTitle = AROS_SetWindowTitle;
+ 			device->SetWindowIcon = AROS_SetWindowIcon;
+diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswindow.c
+--- a/src/video/aros/SDL_aroswindow.c	2026-11-16 08:25:18
++++ b/src/video/aros/SDL_aroswindow.c	2026-11-16 11:31:58
+@@ -134,6 +134,8 @@
+ 		ModifyIDCMP(win, 0);
+ 
+ 		SDL_WindowData *data = (SDL_WindowData *) sdlwin->internal;
++		if (data->appmsg && RemoveAppWindow(data->appmsg))
++			data->appmsg = NULL;
+ 		if (data->menuactive == TRUE) {
+             ClearMenuStrip(win);
+             FreeMenus(data->menu);
+@@ -146,6 +148,9 @@
+         CloseWindow(win);
+ 
+         Permit();
++
++		/* A key released while the window is closed is never reported. */
++		SDL_ResetKeyboard();
+     }
+ }
+ 
+@@ -405,8 +410,16 @@
+ 		else
+ 			maxheight = scr->Height;
+ 
+-		if (fullscreen) {
++		if (fullscreen && vd->CustomScreen == NULL) {
++			/* Fullscreen without a display mode stays on the public screen
++			 * and leaves the screen bar free, so the screen's depth gadget
++			 * and the menus remain reachable. */
++			left = 0;
++			top = scr->BarHeight + 1;
+ 			w = scr->Width;
++			h = scr->Height - top;
++		} else if (fullscreen) {
++			w = scr->Width;
+ 			h = maxheight;
+ 			top = left = 0;
+ 		} else if (data->sdlflags & SDL_WINDOW_MAXIMIZED) { // Maximize window
+@@ -468,7 +481,7 @@
+ 			WA_Flags, flags,
+ 			vd->CustomScreen ? WA_CustomScreen : TAG_IGNORE, vd->CustomScreen,
+ 			vd->CustomScreen ? TAG_IGNORE : WA_PubScreen, vd->WScreen,
+-			(window->flags & SDL_WINDOW_BORDERLESS || fullscreen) ? TAG_IGNORE : WA_ScreenTitle, data->window_title,
++			((window->flags & SDL_WINDOW_BORDERLESS || fullscreen) && vd->CustomScreen) ? TAG_IGNORE : WA_ScreenTitle, data->window_title,
+ 			(window->flags & SDL_WINDOW_BORDERLESS || fullscreen) ? TAG_IGNORE : WA_Title, data->window_title,
+ #if !defined(__AROS__)
+ 			data->region ? WA_TransparentRegion : TAG_IGNORE, data->region,
+@@ -518,7 +531,7 @@
+             data->win->UserData = (APTR)data;
+ 
+ 			/* Menu */
+-            if (!fullscreen) {
++            if (!fullscreen || vd->CustomScreen == NULL) {
+                 data->menuvisualinfo = GetVisualInfoA(vd->WScreen, NULL);
+                 if (data->menuvisualinfo) {
+                     data->menu = CreateMenusA(SDL_ArosMenu ? SDL_ArosMenu : SDL_NewMenu, NULL);
+@@ -536,7 +549,7 @@
+                         data->menuactive = FALSE;
+                     }
+                 }
+-            } else {
++            } else if (vd->CustomScreen) {
+ 				ScreenToFront(vd->CustomScreen);
+ 			}
+ 
+@@ -621,7 +634,7 @@
+ 	}
+ 
+ #if defined(__AROS__)
+-	if (data->win->Flags & WFLG_WINDOWACTIVE) {
++	if (data->win && (data->win->Flags & WFLG_WINDOWACTIVE)) {
+ 		window->flags |= SDL_WINDOW_INPUT_FOCUS;
+ 		SDL_SetKeyboardFocus(window);
+ 	}
+@@ -679,30 +692,73 @@
+ 	}
+ }
+ 
++/* A minimised window is closed. An icon on the Workbench stands for it, and a
++ * double click on that icon opens the window again. */
+ void
+ AROS_MinimizeWindow(SDL_VideoDevice *_this, SDL_Window * window)
+ {
+ 	SDL_WindowData *data = (SDL_WindowData *) window->internal;
++	SDL_VideoData *vd = data->videodata;
+ 
+ 	D(bug("[SDL3:aroswindow] %s: wnd 0x%08lx\n", __func__, data->win));
+ 
++	if (data->win == NULL || (data->sdlflags & SDL_WINDOW_MINIMIZED))
++		return;
++
++	/* Without the icon nothing could bring the window back, so it stays. */
++	if (vd->AppIconRef == NULL) {
++		if (vd->AppIcon == NULL)
++			return;
++		vd->AppIconRef = AddAppIconA(0, 0, FilePart(vd->FullAppName), &vd->WBPort, 0, vd->AppIcon, NULL);
++		if (vd->AppIconRef == NULL)
++			return;
++	}
++
+ 	data->sdlflags |=  SDL_WINDOW_MINIMIZED;
+ 	data->sdlflags &= ~SDL_WINDOW_MAXIMIZED;
+ 
+ 	AROS_HideWindow(_this, window);
++	SDL_SendWindowEvent(window, SDL_EVENT_WINDOW_MINIMIZED, 0, 0);
+ }
+ 
+ void
+ AROS_RestoreWindow(SDL_VideoDevice *_this, SDL_Window * window)
+ {
+ 	SDL_WindowData *data = (SDL_WindowData *) window->internal;
++	SDL_VideoData *vd = data->videodata;
+ 
+ 	D(bug("[SDL3:aroswindow] %s: wnd 0x%08lx\n", __func__, data->win));
+ 
+-	if (data->win) {
+-		data->sdlflags &= ~(SDL_WINDOW_MINIMIZED | SDL_WINDOW_MAXIMIZED);
++	if (data->sdlflags & SDL_WINDOW_MINIMIZED) {
++		SDL_WindowData *wd;
++		bool others = false;
+ 
+-		ChangeWindowBox(data->win, window->x, window->y, window->w, window->h);
++		data->sdlflags &= ~SDL_WINDOW_MINIMIZED;
++		ForeachNode(&vd->windowlist, wd)
++		{
++			if (wd->sdlflags & SDL_WINDOW_MINIMIZED)
++				others = true;
++		}
++		if (!others && vd->AppIconRef) {
++			RemoveAppIcon(vd->AppIconRef);
++			vd->AppIconRef = NULL;
++		}
++
++		AROS_ShowWindow_Internal(_this, window);
++		if (data->win) {
++			SDL_SendWindowEvent(window, SDL_EVENT_WINDOW_RESTORED, 0, 0);
++			SDL_SendWindowEvent(window, SDL_EVENT_WINDOW_EXPOSED, 0, 0);
++		}
++		return;
++	}
++
++	if (data->win && (data->winflags & SDL_AROS_WINDOW_FULLSCREEN) == 0) {
++		data->sdlflags &= ~SDL_WINDOW_MAXIMIZED;
++
++		/* window->w and window->h describe the area inside the borders. */
++		ChangeWindowBox(data->win, window->x, window->y,
++			window->w + data->win->BorderLeft + data->win->BorderRight,
++			window->h + data->win->BorderTop + data->win->BorderBottom);
+ 		AROS_WindowToFront(data->win);
+ 	}
+ }
+@@ -712,27 +768,29 @@
+ {
+ 	SDL_WindowData *data = (SDL_WindowData *) window->internal;
+ 	SDL_VideoData *vd = data->videodata;
++	SDL_WindowData *wd;
++	/* Only a window that asks for a display mode gets a screen of its own. */
++	BYTE own_screen = (fullscreen && window->fullscreen_exclusive) ? 1 : 0;
+ 
+ 	if (fullscreen) {
++		if ((data->winflags & SDL_AROS_WINDOW_FULLSCREEN) == 0) {
++			int ww, hh;
++			SDL_GetWindowSize(window, &ww, &hh);
++
++			data->old_x = data->curr_x;
++			data->old_y = data->curr_y;
++			data->old_w = ww;
++			data->old_h = hh;
++
++			D(bug("[SDL3:aroswindow] %s: Save actual position %d,%d and size %d,%d\n", __func__, data->old_x, data->old_y, data->old_w, data->old_h));
++		}
+ 		data->winflags |= SDL_AROS_WINDOW_FULLSCREEN;
+-		if ((window->flags & SDL_WINDOW_FULLSCREEN) == SDL_WINDOW_FULLSCREEN) {
++		if (own_screen)
++			data->winflags &= ~SDL_AROS_WINDOW_FULLSCREEN_DESKTOP;
++		else
+ 			data->winflags |= SDL_AROS_WINDOW_FULLSCREEN_DESKTOP;
+-		}	
+-		int ww, hh;
+-		SDL_GetWindowSize(window, &ww, &hh);
+-		
+-		data->old_x = data->curr_x;
+-		data->old_y = data->curr_y;
+-		data->old_w = ww;
+-		data->old_h = hh;
+-
+-		D(bug("[SDL3:aroswindow] %s: Save actual position %d,%d and size %d,%d\n", __func__, data->old_x, data->old_y, data->old_w, data->old_h));
+-		
+ 	} else {
+-		
+-		data->winflags &= ~SDL_AROS_WINDOW_FULLSCREEN;
+-
+-		if ((data->old_w && data->old_h) && (data->old_w != data->curr_w && data->old_h != data->curr_h)) {
++		if ((data->winflags & SDL_AROS_WINDOW_FULLSCREEN) && data->old_w && data->old_h) {
+ 			D(bug("[SDL3:aroswindow] %s: Change position %d,%d and size %d,%d\n", __func__, data->old_x, data->old_y, data->old_w, data->old_h));
+ 			window->x = data->old_x;
+ 			window->y = data->old_y;
+@@ -741,14 +799,37 @@
+ 			data->old_w = 0;
+ 			data->old_h = 0;
+ 			data->old_x = 0;
+-			data->old_y = 0;		
++			data->old_y = 0;
+ 		}
++		data->winflags &= ~(SDL_AROS_WINDOW_FULLSCREEN | SDL_AROS_WINDOW_FULLSCREEN_DESKTOP);
++	}
+ 
++	if (vd->FullScreen != own_screen || (own_screen && vd->CustomScreen == NULL)) {
++		/* The windows move to another screen. */
++		AROS_CloseWindows(_this);
++		AROS_CloseDisplay(_this);
++		vd->FullScreen = own_screen;
+ 	}
+-	vd->FullScreen = fullscreen;
+ 
+-	AROS_OpenWindows(_this);
++	ForeachNode(&vd->windowlist, wd)
++	{
++		if ((wd->window->flags & SDL_WINDOW_EXTERNAL) || (wd->winflags & SDL_AROS_WINDOW_SHOWN) == 0)
++			continue;
++		if (wd->win == NULL)
++			AROS_ShowWindow_Internal(_this, wd->window);
++		else if (wd == data)
++			AROS_RecreateWindow(_this, wd->window);
++	}
+ 
++	/* The new window has its final size at once; tell SDL, which otherwise
++	 * assumes the size of the display. */
++	if (data->win) {
++		struct Window *w = data->win;
++
++		SDL_SendWindowEvent(window, SDL_EVENT_WINDOW_MOVED, w->LeftEdge, w->TopEdge);
++		SDL_SendWindowEvent(window, SDL_EVENT_WINDOW_RESIZED, w->Width - w->BorderLeft - w->BorderRight, w->Height - w->BorderTop - w->BorderBottom);
++	}
++
+ 	return SDL_FULLSCREEN_SUCCEEDED;
+ }
+ 
+@@ -803,6 +884,8 @@
+ 	}
+ }
+ 
++/* Closes the system window but keeps the SDL window and its focus, for a
++ * window that is opened again at once. */
+ static void 
+ AROS_CloseWindow(SDL_Window *window)
+ {
+@@ -810,19 +893,29 @@
+ 	D(bug("[SDL3:aroswindow] %s: 0x%08lx\n", __func__, data->win));
+ 
+     if (data->win) {
++		struct Window *win = data->win;
++		struct IntuiMessage *msg, *tmp;
++
+         if (data->appmsg) {
+             if (RemoveAppWindow(data->appmsg)) {
+                 data->appmsg = NULL;
+             }
+         }
+ 
+-
+-		struct Window *win = data->win;
+-
+-#if defined(__AROS__)
++		/* Messages still queued for this window must not be read after it is
++		 * closed. */
++		Forbid();
++		if (win->UserPort) {
++			ForeachNodeSafe(&win->UserPort->mp_MsgList, msg, tmp)
++			{
++				if (msg->IDCMPWindow == win) {
++					REMOVE(&msg->ExecMessage.mn_Node);
++					ReplyMsg(&msg->ExecMessage);
++				}
++			}
++		}
+ 		win->UserPort = NULL;
+ 		ModifyIDCMP(win, 0);
+-#endif
+ 
+         if (data->menuactive == TRUE) {
+             ClearMenuStrip(win);
+@@ -833,7 +926,12 @@
+             data->menuactive = FALSE;
+         }
+         CloseWindow(win);
++		Permit();
+         data->win = NULL;
++
++		/* A key released while the window is closed is never reported, so
++		 * every key counts as released from here on. */
++		SDL_ResetKeyboard();
+     }
+ }
+ 
+diff --color -ruN a/src/video/aros/SDL_aroswindow.h b/src/video/aros/SDL_aroswindow.h
+--- a/src/video/aros/SDL_aroswindow.h	2026-11-16 08:25:18
++++ b/src/video/aros/SDL_aroswindow.h	2026-11-16 11:31:58
+@@ -84,6 +84,8 @@
+ 	BYTE grabbed;
+ 	BYTE first_deltamove;
+ 	BYTE winflags;
++	/* The iconify gadget was used; the window closes after its message is replied. */
++	BYTE minimize_pending;
+ 	
+ 	APTR menuvisualinfo;
+ 	struct Menu *menu;
