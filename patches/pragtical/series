@@ -12,3 +12,4 @@
 0012-aros-volume-path-before-realpath.patch
 0013-aros-current-directory-without-slash.patch
 0014-aros-system-window-border.patch
+0015-aros-system-menu-only.patch

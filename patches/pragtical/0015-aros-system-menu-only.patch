@@ -1,0 +1,48 @@
+Title: 0015-aros-system-menu-only
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0014-aros-system-window-border.patch
+Author: aros-pragtical project
+Date: 2026-11-16
+Upstream-Status: local-only
+Scope: AROS only, default of config.show_menubar in data/core/config.lua and the settings plugin.
+
+Problem:
+  With the system window border the editor showed two menus: the Intuition menu of the window and its own menu bar drawn inside the window.
+Solution:
+  Default config.show_menubar to false on AROS. The drawn bar can be switched on again from the system menu (View, Menu Bar) or in the settings.
+Validation:
+  2026-11-16, mainline nightly 20261113, AROS One 1.3 and Raspberry Pi nightly 20261110 in QEMU: the window shows no drawn menu bar at start.
+Removal:
+  Permanent for the AROS port.
+
+diff --git a/data/core/config.lua b/data/core/config.lua
+index 29e5875b..3260e97c 100644
+--- a/data/core/config.lua
++++ b/data/core/config.lua
+@@ -12,9 +12,10 @@ config.renderer = "default"
+ 
+ ---Visibility of the responsive application menu bar.
+ ---
+----Defaults to true.
++---Defaults to true, except on AROS, where the commands are in the
++---system menu of the window.
+ ---@type boolean
+-config.show_menubar = true
++config.show_menubar = PLATFORM ~= "AROS"
+ 
+ ---Keep the maximum FPS locked to current display refresh rate.
+ ---
+diff --git a/data/plugins/settings.lua b/data/plugins/settings.lua
+index 8facdc6a..07ed7322 100644
+--- a/data/plugins/settings.lua
++++ b/data/plugins/settings.lua
+@@ -506,7 +506,7 @@ settings.add("User Interface",
+       description = "Show the application menu bar on the top or inside the title bar in borderless mode.",
+       path = "show_menubar",
+       type = settings.type.TOGGLE,
+-      default = true,
++      default = PLATFORM ~= "AROS",
+       ---Apply saved or edited visibility through the bar's animated lifecycle.
+       ---@param enabled boolean Whether the application menu bar should be shown
+       on_apply = function(enabled)

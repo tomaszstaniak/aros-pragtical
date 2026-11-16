@@ -1,6 +1,6 @@
 diff --color -ruN a/src/video/aros/SDL_arosevents.c b/src/video/aros/SDL_arosevents.c
 --- a/src/video/aros/SDL_arosevents.c	2026-11-16 08:25:18
-+++ b/src/video/aros/SDL_arosevents.c	2026-11-16 11:31:58
++++ b/src/video/aros/SDL_arosevents.c	2026-11-16 12:25:00
 @@ -309,7 +309,12 @@
  
  	switch (((struct Gadget *)m->IAddress)->GadgetID) {
@@ -38,7 +38,7 @@ diff --color -ruN a/src/video/aros/SDL_arosevents.c b/src/video/aros/SDL_aroseve
              if (wdata && check_mousecoord && wdata->win) {
 diff --color -ruN a/src/video/aros/SDL_arosvideo.c b/src/video/aros/SDL_arosvideo.c
 --- a/src/video/aros/SDL_arosvideo.c	2026-11-16 08:25:18
-+++ b/src/video/aros/SDL_arosvideo.c	2026-11-16 11:31:58
++++ b/src/video/aros/SDL_arosvideo.c	2026-11-16 12:25:00
 @@ -171,6 +171,8 @@
          if (win) {
              AROS_SetWindowOpacity(_this, wd->window, 1.0);
@@ -77,7 +77,7 @@ diff --color -ruN a/src/video/aros/SDL_arosvideo.c b/src/video/aros/SDL_arosvide
  			device->SetWindowIcon = AROS_SetWindowIcon;
 diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswindow.c
 --- a/src/video/aros/SDL_aroswindow.c	2026-11-16 08:25:18
-+++ b/src/video/aros/SDL_aroswindow.c	2026-11-16 11:31:58
++++ b/src/video/aros/SDL_aroswindow.c	2026-11-16 12:25:00
 @@ -134,6 +134,8 @@
  		ModifyIDCMP(win, 0);
  
@@ -115,7 +115,32 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  			h = maxheight;
  			top = left = 0;
  		} else if (data->sdlflags & SDL_WINDOW_MAXIMIZED) { // Maximize window
-@@ -468,7 +481,7 @@
+@@ -456,19 +469,29 @@
+ 		D(bug("[SDL3:aroswindow] %s: min %ld/%ld, normal %ld/%ld, max %ld/%ld\n", __func__, min_w, min_h, w, h, max_w, max_h));
+ 
+ 		ULONG opacity_value = ((window->opacity) * (ULONG_MAX));
+-		
++
++		/* The zoom gadget switches between the window's size and the whole
++		 * screen below the screen bar. Without this box it would shrink the
++		 * window to its smallest size. */
++		WORD zoom_box[4];
++		zoom_box[0] = 0;
++		zoom_box[1] = scr->BarHeight + 1;
++		zoom_box[2] = scr->Width;
++		zoom_box[3] = scr->Height - scr->BarHeight - 1;
++
+ 		data->win = OpenWindowTags(NULL,
+ 			WA_Left, left, WA_Top, top,
+ 			WA_InnerWidth, w,
+ 			WA_InnerHeight, h,
+-			WA_MinWidth, win_resizable ? 32 : min_w,
+-			WA_MinHeight, win_resizable ? 32 : min_h,
++			WA_MinWidth, (win_resizable && min_w == 0) ? 32 : min_w,
++			WA_MinHeight, (win_resizable && min_h == 0) ? 32 : min_h,
++			(win_resizable && vd->CustomScreen == NULL) ? WA_Zoom : TAG_IGNORE, (IPTR)zoom_box,
+ 			WA_MaxWidth, win_resizable ? -1 : max_w,
+ 			WA_MaxHeight, win_resizable ? -1 : max_h,
  			WA_Flags, flags,
  			vd->CustomScreen ? WA_CustomScreen : TAG_IGNORE, vd->CustomScreen,
  			vd->CustomScreen ? TAG_IGNORE : WA_PubScreen, vd->WScreen,
@@ -124,7 +149,23 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  			(window->flags & SDL_WINDOW_BORDERLESS || fullscreen) ? TAG_IGNORE : WA_Title, data->window_title,
  #if !defined(__AROS__)
  			data->region ? WA_TransparentRegion : TAG_IGNORE, data->region,
-@@ -518,7 +531,7 @@
+@@ -506,6 +529,15 @@
+ 				}
+ 			}
+ 
++			/* The minimum size asked for by the application is the size
++			 * inside the borders, which are known only now. */
++			if (win_resizable && (min_w || min_h)) {
++				WindowLimits(data->win,
++					min_w ? min_w + data->win->BorderLeft + data->win->BorderRight : 0,
++					min_h ? min_h + data->win->BorderTop + data->win->BorderBottom : 0,
++					0, 0);
++			}
++
+ 			data->win->UserPort = &vd->WinPort;
+ 			ModifyIDCMP(data->win, IDCMP_CLOSEWINDOW | IDCMP_RAWKEY | IDCMP_MOUSEMOVE | IDCMP_DELTAMOVE | IDCMP_MOUSEBUTTONS | IDCMP_REFRESHWINDOW | IDCMP_ACTIVEWINDOW | IDCMP_INACTIVEWINDOW | IDCMP_CHANGEWINDOW | IDCMP_GADGETUP | IDCMP_MENUPICK);
+ 
+@@ -518,7 +550,7 @@
              data->win->UserData = (APTR)data;
  
  			/* Menu */
@@ -133,7 +174,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
                  data->menuvisualinfo = GetVisualInfoA(vd->WScreen, NULL);
                  if (data->menuvisualinfo) {
                      data->menu = CreateMenusA(SDL_ArosMenu ? SDL_ArosMenu : SDL_NewMenu, NULL);
-@@ -536,7 +549,7 @@
+@@ -536,7 +568,7 @@
                          data->menuactive = FALSE;
                      }
                  }
@@ -142,7 +183,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  				ScreenToFront(vd->CustomScreen);
  			}
  
-@@ -621,7 +634,7 @@
+@@ -621,7 +653,7 @@
  	}
  
  #if defined(__AROS__)
@@ -151,7 +192,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  		window->flags |= SDL_WINDOW_INPUT_FOCUS;
  		SDL_SetKeyboardFocus(window);
  	}
-@@ -679,30 +692,73 @@
+@@ -679,30 +711,73 @@
  	}
  }
  
@@ -228,7 +269,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  		AROS_WindowToFront(data->win);
  	}
  }
-@@ -712,27 +768,29 @@
+@@ -712,27 +787,29 @@
  {
  	SDL_WindowData *data = (SDL_WindowData *) window->internal;
  	SDL_VideoData *vd = data->videodata;
@@ -274,7 +315,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  			D(bug("[SDL3:aroswindow] %s: Change position %d,%d and size %d,%d\n", __func__, data->old_x, data->old_y, data->old_w, data->old_h));
  			window->x = data->old_x;
  			window->y = data->old_y;
-@@ -741,14 +799,37 @@
+@@ -741,14 +818,37 @@
  			data->old_w = 0;
  			data->old_h = 0;
  			data->old_x = 0;
@@ -315,7 +356,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  	return SDL_FULLSCREEN_SUCCEEDED;
  }
  
-@@ -803,6 +884,8 @@
+@@ -803,6 +903,8 @@
  	}
  }
  
@@ -324,7 +365,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  static void 
  AROS_CloseWindow(SDL_Window *window)
  {
-@@ -810,19 +893,29 @@
+@@ -810,19 +912,29 @@
  	D(bug("[SDL3:aroswindow] %s: 0x%08lx\n", __func__, data->win));
  
      if (data->win) {
@@ -359,7 +400,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  
          if (data->menuactive == TRUE) {
              ClearMenuStrip(win);
-@@ -833,7 +926,12 @@
+@@ -833,7 +945,12 @@
              data->menuactive = FALSE;
          }
          CloseWindow(win);
@@ -374,7 +415,7 @@ diff --color -ruN a/src/video/aros/SDL_aroswindow.c b/src/video/aros/SDL_aroswin
  
 diff --color -ruN a/src/video/aros/SDL_aroswindow.h b/src/video/aros/SDL_aroswindow.h
 --- a/src/video/aros/SDL_aroswindow.h	2026-11-16 08:25:18
-+++ b/src/video/aros/SDL_aroswindow.h	2026-11-16 11:31:58
++++ b/src/video/aros/SDL_aroswindow.h	2026-11-16 12:25:00
 @@ -84,6 +84,8 @@
  	BYTE grabbed;
  	BYTE first_deltamove;
