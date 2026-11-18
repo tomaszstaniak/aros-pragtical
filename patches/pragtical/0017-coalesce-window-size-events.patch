@@ -4,7 +4,7 @@ Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
 Requires: 0016-dirmonitor-stop-threads-at-exit.patch
 Author: aros-pragtical project
 Date: 2026-11-18
-Upstream-Status: candidate
+Upstream-Status: local-only
 Scope: src/system_events.c; all platforms.
 
 Problem:
@@ -12,9 +12,9 @@ Problem:
 Solution:
   When a size event for a window is already queued, replace its size with the newer one instead of queueing another, as is done for mouse motion.
 Validation:
-  not-run
+  2026-11-18, AROS One 1.3 under QEMU, 600 fast resizes through the size gadget: 581 size events queued and 581 handled with this patch, 574 and 574 without it. The editor takes each size event before the next one arrives, so nothing is merged. No measured effect; not for upstream.
 Removal:
-  Fill in when this is a workaround; permanent fixes say so here.
+  Drop at the next base update unless a system is found where size events do queue up.
 
 diff --git a/src/system_events.c b/src/system_events.c
 index 45c770aa..c1738923 100644

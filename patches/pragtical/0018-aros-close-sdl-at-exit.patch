@@ -12,7 +12,7 @@ Problem:
 Solution:
   Register SDL_Quit as an exit handler after SDL_Init on AROS. A second SDL_Quit after the normal shutdown does nothing.
 Validation:
-  not-run
+  2026-11-18, AROS One 1.3 and mainline nightly 20261113 under QEMU: after the forced exit the window is closed; without the patch it stayed on the screen.
 Removal:
   Fill in when this is a workaround; permanent fixes say so here.
 
