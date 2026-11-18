@@ -14,5 +14,4 @@
 0014-aros-system-window-border.patch
 0015-aros-system-menu-only.patch
 0016-dirmonitor-stop-threads-at-exit.patch
-0017-coalesce-window-size-events.patch
 0018-aros-close-sdl-at-exit.patch
