@@ -1,0 +1,25 @@
+--- a/src/video/aros/SDL_aroswindow.c
++++ b/src/video/aros/SDL_aroswindow.c
+@@ -373,7 +373,10 @@
+ 
+ 	if (data->win == NULL && (data->sdlflags & SDL_WINDOW_MINIMIZED) == 0) {
+ 		struct Screen *scr;
+-		size_t flags = WFLG_SIMPLE_REFRESH | WFLG_REPORTMOUSE | WFLG_ACTIVATE;
++		/* A smart refresh window keeps its own contents while it is moved or
++		 * covered, so dragging it (or a window over it) does not ask for a
++		 * full redraw at every step. */
++		size_t flags = WFLG_SMART_REFRESH | WFLG_REPORTMOUSE | WFLG_ACTIVATE;
+ 		size_t w = window->w, h = window->h;
+ 		size_t min_w = window->min_w, min_h = window->min_h;
+ 		size_t left = window->x, top = window->y;
+--- a/src/video/aros/SDL_arosevents.c
++++ b/src/video/aros/SDL_arosevents.c
+@@ -284,7 +284,7 @@
+ 
+ 	D(bug("[SDL3:arosevt] %s()\n", __func__));
+ 
+-	if (data->curr_x != w->LeftEdge || data->curr_h != w->TopEdge) {
++	if (data->curr_x != w->LeftEdge || data->curr_y != w->TopEdge) {
+ 		data->curr_x = w->LeftEdge;
+ 		data->curr_y = w->TopEdge;
+ 		SDL_SendWindowEvent(data->window, SDL_EVENT_WINDOW_MOVED, data->curr_x, data->curr_y);

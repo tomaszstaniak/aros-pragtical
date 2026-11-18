@@ -41,5 +41,6 @@ patch -p1 -d "SDL3-$SDL3_VER" < "$PROJECT_ROOT/patches/dependencies/sdl3-3.4.12-
 patch -p1 -d "SDL3-$SDL3_VER" < "$PROJECT_ROOT/patches/dependencies/sdl3-3.4.12-optional-iconv.diff"
 patch -p1 -d "SDL3-$SDL3_VER" < "$PROJECT_ROOT/patches/dependencies/sdl3-3.4.12-aros-charset-clipboard.diff"
 patch -p1 -d "SDL3-$SDL3_VER" < "$PROJECT_ROOT/patches/dependencies/sdl3-3.4.12-aros-minimize-fullscreen.diff"
+patch -p1 -d "SDL3-$SDL3_VER" < "$PROJECT_ROOT/patches/dependencies/sdl3-3.4.12-aros-smart-refresh.diff"
 
 echo "fetch-sdl3: SDL3 $SDL3_VER ready in $SRC/SDL3-$SDL3_VER"
