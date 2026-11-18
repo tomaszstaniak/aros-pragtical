@@ -1,0 +1,35 @@
+Title: 0018-aros-close-sdl-at-exit
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0017-coalesce-window-size-events.patch
+Author: aros-pragtical project
+Date: 2026-11-18
+Upstream-Status: local-only
+Scope: AROS only, src/main.c.
+
+Problem:
+  An exit() from an error path (for example a failed window surface) skips SDL_AppQuit and SDL_Quit. AROS does not close a program's windows when it ends, so the editor window stayed on the screen with no program behind it.
+Solution:
+  Register SDL_Quit as an exit handler after SDL_Init on AROS. A second SDL_Quit after the normal shutdown does nothing.
+Validation:
+  not-run
+Removal:
+  Fill in when this is a workaround; permanent fixes say so here.
+
+diff --git a/src/main.c b/src/main.c
+index dff13090..e2786cc4 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -353,6 +353,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
+     return SDL_APP_FAILURE;
+   }
+   SDL_SetEventEnabled(SDL_EVENT_DROP_FILE, true);
++#ifdef __AROS__
++  /* An exit() from an error path skips SDL_AppQuit and the SDL_Quit after it.
++   * AROS does not close a program's windows for it, so the window would stay
++   * on the screen with nothing behind it. */
++  atexit(SDL_Quit);
++#endif
+ 
+   if (ren_init() != 0) {
+     fprintf(stderr, "Error initializing renderer: %s\n", SDL_GetError());

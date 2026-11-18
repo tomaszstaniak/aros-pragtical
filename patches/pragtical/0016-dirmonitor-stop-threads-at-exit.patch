@@ -1,0 +1,91 @@
+Title: 0016-dirmonitor-stop-threads-at-exit
+Repository: pragtical
+Base-Commit: 5c05f09e081833b581fb5ecd10e64963dec87f03
+Requires: 0015-aros-system-menu-only.patch
+Author: aros-pragtical project
+Date: 2026-11-18
+Upstream-Status: candidate
+Scope: src/api/dirmonitor.c; all platforms, behaviour unchanged when exit() is not called with a running monitor.
+
+Problem:
+  exit() while a directory monitor thread is running crashes on AROS: the process cleanup closes what the thread still uses (seen as a failure in DoIO on the timer device after a renderer error path called exit(1)).
+Solution:
+  Keep a list of live monitors and register an exit handler that ends every check thread and its watches before the process cleanup runs. Garbage collection uses the same stop routine and does it once.
+Validation:
+  not-run
+Removal:
+  Fill in when this is a workaround; permanent fixes say so here.
+
+diff --git a/src/api/dirmonitor.c b/src/api/dirmonitor.c
+index cde46408..2acfcadd 100644
+--- a/src/api/dirmonitor.c
++++ b/src/api/dirmonitor.c
+@@ -16,8 +16,16 @@ struct dirmonitor {
+   volatile int length;
+   struct dirmonitor_backend* backend;
+   struct dirmonitor_internal* internal;
++  struct dirmonitor* next;
++  bool stopped;
+ };
+ 
++/* Every monitor that has not been collected yet. Only the main thread
++ * touches the list. */
++static struct dirmonitor* monitors;
++static bool exit_handler_set;
++static void dirmonitor_stop_all(void);
++
+ 
+ static struct dirmonitor_backend* const backends[] = {
+ #ifdef DIRMONITOR_INOTIFY
+@@ -130,12 +138,21 @@ static int f_dirmonitor_new(lua_State* L) {
+   monitor->mutex = SDL_CreateMutex();
+   monitor->backend = backend;
+   monitor->internal = monitor->backend->init();
++  monitor->next = monitors;
++  monitors = monitor;
++  if (!exit_handler_set) {
++    exit_handler_set = true;
++    atexit(dirmonitor_stop_all);
++  }
+   return 1;
+ }
+ 
+ 
+-static int f_dirmonitor_gc(lua_State* L) {
+-  struct dirmonitor* monitor = luaL_checkudata(L, 1, API_TYPE_DIRMONITOR);
++/* Ends the check thread and the backend's watches. */
++static void dirmonitor_stop(struct dirmonitor* monitor) {
++  if (monitor->stopped)
++    return;
++  monitor->stopped = true;
+   SDL_LockMutex(monitor->mutex);
+   monitor->length = -1;
+   SDL_UnlockMutex(monitor->mutex);
+@@ -144,6 +161,27 @@ static int f_dirmonitor_gc(lua_State* L) {
+     SDL_WaitThread(monitor->thread, NULL);
+     monitor->thread = NULL;
+   }
++}
++
++
++/* exit() can be called while a check thread is still running (a renderer
++ * error path does it). The process cleanup that follows takes away what the
++ * thread uses, so the threads are ended first. */
++static void dirmonitor_stop_all(void) {
++  for (struct dirmonitor* monitor = monitors; monitor; monitor = monitor->next)
++    dirmonitor_stop(monitor);
++}
++
++
++static int f_dirmonitor_gc(lua_State* L) {
++  struct dirmonitor* monitor = luaL_checkudata(L, 1, API_TYPE_DIRMONITOR);
++  dirmonitor_stop(monitor);
++  for (struct dirmonitor** link = &monitors; *link; link = &(*link)->next) {
++    if (*link == monitor) {
++      *link = monitor->next;
++      break;
++    }
++  }
+   SDL_free(monitor->internal);
+   SDL_DestroyMutex(monitor->mutex);
+   return 0;
