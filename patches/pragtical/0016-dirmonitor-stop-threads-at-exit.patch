@@ -14,7 +14,7 @@ Solution:
 Validation:
   2026-11-18, AROS One 1.3 and mainline nightly 20261113 under QEMU: os.exit(1, false) from user/init.lua with a watched project directory ended in a Software Failure requester (task dirmonitor_check_thread, Exec DoIO) before the patch and returns to the Shell with it.
 Removal:
-  Fill in when this is a workaround; permanent fixes say so here.
+  Permanent fix.
 
 diff --git a/src/api/dirmonitor.c b/src/api/dirmonitor.c
 index cde46408..2acfcadd 100644
