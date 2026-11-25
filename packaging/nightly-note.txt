@@ -1,0 +1,1 @@
+Needs an AROS nightly of 2026-11-24 or later; for earlier nightlies use 3.14.0-aros7 from the project page.

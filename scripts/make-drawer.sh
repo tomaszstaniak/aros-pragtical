@@ -56,10 +56,16 @@ case "$AROS_TARGET" in
   mainline) PKG_ARCH=x86_64;  PKG_ABI=v1;  RUNTIME_LIBS="posixc.library stdc.library stdcio.library" ;;
   *)        PKG_ARCH=x86_64;  PKG_ABI=v11; RUNTIME_LIBS="crt.library stdlib.library m.library" ;;
 esac
+# Mainline and Pi builds follow the SDK of a nightly; the note names the
+# oldest nightly they run on (packaging/nightly-note.txt).
+NIGHTLY_NOTE=""
+[ "$PKG_ABI" = v1 ] && NIGHTLY_NOTE="$(cat "$PROJECT_ROOT/packaging/nightly-note.txt")"
 {
   sed -e "s/@VERSION@/${RELEASE%%-*}/" -e "s/@REVISION@/$REVISION/" \
       -e "s/@ARCH@/$PKG_ARCH/" -e "s/@ABI@/$PKG_ABI/" \
-      "$PROJECT_ROOT/packaging/Pragtical.arospkg.toml.in"
+      "$PROJECT_ROOT/packaging/Pragtical.arospkg.toml.in" |
+    if [ -n "$NIGHTLY_NOTE" ]; then sed -e "s|^post_install_notes = \[\$|&\\
+  \"$NIGHTLY_NOTE\",|"; else cat; fi
   for lib in $RUNTIME_LIBS cybergraphics.library gadtools.library gl.library icon.library \
              iffparse.library keymap.library lowlevel.library muimaster.library \
              commodities.library workbench.library z1.library; do
